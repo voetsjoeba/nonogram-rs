@@ -5,3 +5,9 @@ pub fn ralign(s: &str, width: usize) -> String {
     }
     format!("{}{}", " ".repeat(width-s.len()), s)
 }
+
+#[derive(PartialEq, Copy, Clone, Debug)]
+pub enum Direction {
+    Horizontal,
+    Vertical,
+}

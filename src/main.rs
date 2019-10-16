@@ -1,11 +1,15 @@
 // vim: set ai et ts=4 sts=4 sw=4:
 mod util;
-mod square;
 mod puzzle;
+mod square;
+mod run;
+mod row;
+mod field;
 
 use std::vec::Vec;
 use yaml_rust::{YamlLoader, Yaml};
 use self::puzzle::Puzzle;
+use self::square::SquareStatus;
 
 fn main() {
     let s = "
@@ -36,6 +40,6 @@ cols:
     let docs: Vec<Yaml> = YamlLoader::load_from_str(s).unwrap();
     let doc: &Yaml = &docs[0];
 
-    let puzzle = Puzzle::from_yaml(doc);
+    let mut puzzle = Puzzle::from_yaml(doc);
     println!("{}", puzzle);
 }

@@ -1,16 +1,84 @@
 // vim: set ai et ts=4 sw=4 sts=4:
 use std::fmt;
 use std::convert::TryFrom;
+use std::ops::{Index, IndexMut};
 use yaml_rust::Yaml;
 
 use super::square::{Square, SquareStatus};
-use super::util::ralign;
+use super::util::{ralign, Direction, Direction::Horizontal, Direction::Vertical};
+use super::run::Run;
+use super::row::Row;
+use super::field::Field;
 
 #[derive(Debug)]
 pub struct Puzzle {
-    row_runs: Vec<Vec<u32>>,
-    col_runs: Vec<Vec<u32>>,
-    squares:  Vec<Vec<Square>>,
+    rows:    Vec<Row>,
+    cols:    Vec<Row>,
+    squares: Vec<Vec<Square>>,
+}
+
+impl Puzzle {
+
+    pub fn from_yaml(doc: &Yaml) -> Puzzle {
+        let rows = Self::_parse_row(&doc["rows"], Horizontal);
+        let cols = Self::_parse_row(&doc["cols"], Vertical);
+
+        let width = cols.len();
+        let height = rows.len();
+
+        let mut squares = Vec::<Vec::<Square>>::with_capacity(height);
+        for y in 0..height {
+            let row: Vec<Square> = (0..width).map(|x| Square::new(x, y)).collect();
+            squares.push(row);
+        }
+
+        Puzzle {
+            rows: rows,
+            cols: cols,
+            squares: squares,
+        }
+    }
+    fn _parse_row(input: &Yaml, direction: Direction) -> Vec<Row> {
+		let list: &Vec<Yaml> = input.as_vec().unwrap();
+        list.iter()
+            .enumerate()
+		    .map(|(i, yaml_val)| Row::new(direction, u32::try_from(i).unwrap(),
+                                          Self::_parse_row_runs(yaml_val, direction)))
+			.collect()
+    }
+    fn _parse_row_runs(input: &Yaml, direction: Direction) -> Vec<Run> {
+        match input {
+            Yaml::String(_)  => { input.as_str().unwrap()
+                                       .split_whitespace()
+                                       .map(|int| Run::new(direction, int.trim().parse().unwrap()))
+                                       .collect()
+                                },
+            Yaml::Integer(_) => { vec![ Run::new(direction,
+			                                     u32::try_from(input.as_i64().unwrap()).unwrap()) ]
+							    }
+            _ => panic!("Unexpected data type: {:?}", input),
+        }
+    }
+
+    pub fn width(&self) -> usize {
+        self.squares[0].len()
+    }
+    pub fn height(&self) -> usize {
+        self.squares.len()
+    }
+
+}
+
+impl Index<usize> for Puzzle {
+    type Output = Vec<Square>;
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.squares[index]
+    }
+}
+impl IndexMut<usize> for Puzzle {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        &mut self.squares[index]
+    }
 }
 
 impl fmt::Display for Puzzle {
@@ -24,9 +92,9 @@ impl fmt::Display for Puzzle {
                      content_parts: &Vec<String>)
         {
             write!(f, "{prefix} {left_delim}", prefix=prefix, left_delim=left_delim).expect("");
-            for (x, s) in content_parts.iter().enumerate() {
+            for (idx, s) in content_parts.iter().enumerate() {
                 write!(f, "{}", s).expect("");
-                if ((x+1) % 5 == 0) && (x < content_parts.len()-1) {
+                if ((idx+1) % 5 == 0) && (idx < content_parts.len()-1) {
                     write!(f, "{}", columnwise_separator).expect("");
                 }
             }
@@ -38,19 +106,19 @@ impl fmt::Display for Puzzle {
                       " ",
                       " ",
                       " ",
-                      &puzzle.col_runs.iter()
-                                      .map( |x| format!(" {:-2}", if line_idx < x.len() { x[x.len()-1-line_idx].to_string() } else { String::from("") }) )
+                      &puzzle.cols.iter()
+                                  .map( |col| format!(" {:-2}", if line_idx < col.runs.len() { col.runs[col.runs.len()-1-line_idx].length.to_string() } else { String::from("") }) )
                                       .collect::<Vec<_>>()
             )
         }
 
-        let row_prefixes: Vec<String> = self.row_runs.iter()
-                                            .map(|x| x.iter().map(|y| y.to_string())
-                                                             .collect::<Vec<_>>()
-                                                             .join(" "))
+        let row_prefixes: Vec<String> = self.rows.iter()
+                                            .map(|row| row.runs.iter().map(|run| run.length.to_string())
+                                                                      .collect::<Vec<_>>()
+                                                                      .join(" "))
                                             .collect();
         let prefix_len = row_prefixes.iter().map(|x| x.len()).max().unwrap();
-        let max_col_runs = self.col_runs.iter().map(|x| x.len()).max().unwrap();
+        let max_col_runs = self.cols.iter().map(|col| col.runs.len()).max().unwrap();
 
 
         for i in (0..max_col_runs).rev() {
@@ -104,52 +172,3 @@ impl fmt::Display for Puzzle {
     }
 }
 
-impl Puzzle {
-
-    pub fn from_yaml(doc: &Yaml) -> Puzzle {
-        let row_runs = Self::_parse_runs(&doc["rows"]);
-        let col_runs = Self::_parse_runs(&doc["cols"]);
-
-        let width = col_runs.len();
-        let height = row_runs.len();
-
-        let mut squares = Vec::<Vec::<Square>>::with_capacity(height);
-        for y in 0..height {
-            let row : Vec<Square> = (0..width).map(|x| Square::new(x, y)).collect();
-            squares.push(row);
-        }
-
-        Puzzle {
-            row_runs: row_runs,
-            col_runs: col_runs,
-            squares: squares,
-        }
-    }
-    fn _parse_run_spec(input: &Yaml) -> Vec<u32> {
-        match input {
-            Yaml::String(_)  => { input.as_str().unwrap()
-                                       .split_whitespace()
-                                       .map(|x| x.trim().parse().unwrap())
-                                       .collect()
-                                },
-            Yaml::Integer(_) => { vec![ u32::try_from(input.as_i64().unwrap()).unwrap() ] }
-                           _ => panic!("Unexpected data type: {:?}", input),
-        }
-    }
-    fn _parse_runs(input: &Yaml) -> Vec<Vec<u32>> {
-        let mut result = Vec::<Vec<u32>>::new();
-        for value in input.as_vec().unwrap().iter() {
-            let ints = Self::_parse_run_spec(value);
-            result.push(ints);
-        }
-        return result;
-    }
-
-    pub fn width(&self) -> usize {
-        self.squares[0].len()
-    }
-    pub fn height(&self) -> usize {
-        self.squares.len()
-    }
-
-}
