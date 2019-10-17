@@ -1,6 +1,5 @@
 // vim: set ai et ts=4 sts=4:
 use std::fmt;
-use std::result;
 
 #[derive(PartialEq, Copy, Clone, Debug)]
 pub enum SquareStatus {
@@ -15,7 +14,7 @@ pub enum StatusError {
     Conflicts,     // new status conflicts with existing (non-unknown) status
 }
 
-type StatusResult = result::Result<(), StatusError>;
+type StatusResult = Result<(), StatusError>;
 
 #[derive(Debug)]
 pub struct Square {
@@ -55,6 +54,33 @@ impl fmt::Display for Square {
             SquareStatus::FilledIn   => "\u{25A0}", // filled in black square
             SquareStatus::Unknown    => "\u{26AC}", // medium circle, not filled in
         })
+    }
+}
+
+pub struct Grid {
+    pub squares: Vec<Vec<Square>>,
+}
+impl Grid {
+    pub fn new(width: usize, height: usize)
+        -> Self
+    {
+        Grid {
+            squares: (0..height).map(|y| (0..width).map(|x| Square::new(x, y))
+                                                   .collect::<Vec<_>>())
+                                .collect(),
+        }
+    }
+
+    pub fn width(&self) -> usize { self.squares[0].len() }
+    pub fn height(&self) -> usize { self.squares.len() }
+    pub fn get_square(&self, x: usize, y: usize) -> &Square {
+        &self.squares[y][x]
+    }
+}
+
+impl fmt::Debug for Grid {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Grid(w={}, h={})", self.width(), self.height())
     }
 }
 
