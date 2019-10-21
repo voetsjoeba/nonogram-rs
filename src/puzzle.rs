@@ -1,6 +1,4 @@
 // vim: set ai et ts=4 sw=4 sts=4:
-mod solver;
-
 use std::fmt;
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -63,6 +61,21 @@ impl Puzzle {
             Yaml::Integer(_) => { vec![ usize::try_from(input.as_i64().unwrap()).unwrap() ] }
             Yaml::Null       => { vec![] }
             _ => panic!("Unexpected data type: {:?}", input),
+        }
+    }
+
+    pub fn solve(&mut self) {
+        // 1. update field definitions on each row (i.e. contiguous runs of non-crossedout squares)
+        // 2. update min_start and max_start values of each run
+        for _ in 0..5 {
+            for row in self.rows.iter_mut().chain(self.cols.iter_mut()) {
+                row.recalculate_fields();
+                row.update_run_bounds();
+                row.fill_overlap();
+            }
+            for row in self.rows.iter_mut().chain(self.cols.iter_mut()) {
+                row.mark_completed_runs();
+            }
         }
     }
 }

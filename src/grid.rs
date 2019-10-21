@@ -63,23 +63,28 @@ impl Square {
             Vertical   => self.vrun_index,
         }
     }
-    pub fn assign_run(&mut self, run: &Run) -> RunAssignmentResult {
-        match run.direction {
+    pub fn set_run_index(&mut self, direction: Direction, new_index: usize)
+        -> RunAssignmentResult
+    {
+        match direction {
             Horizontal => {
                 if let Some(x) = self.hrun_index {
-                    if x != run.index { return Err(RunAssignmentError::Conflicts(run.direction, x)); }
+                    if x != new_index { return Err(RunAssignmentError::Conflicts(direction, x)); }
                 }
-                self.hrun_index = Some(run.index);
+                self.hrun_index = Some(new_index);
                 return Ok(());
             },
             Vertical   => {
                 if let Some(x) = self.vrun_index {
-                    if x != run.index { return Err(RunAssignmentError::Conflicts(run.direction, x)); }
+                    if x != new_index { return Err(RunAssignmentError::Conflicts(direction, x)); }
                 }
-                self.vrun_index = Some(run.index);
+                self.vrun_index = Some(new_index);
                 return Ok(());
             },
         }
+    }
+    pub fn assign_run(&mut self, run: &Run) -> RunAssignmentResult {
+        self.set_run_index(run.direction, run.index)
     }
 }
 
