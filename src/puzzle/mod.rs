@@ -5,7 +5,6 @@ use std::fmt;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::convert::TryFrom;
-use std::ops::{Index, IndexMut};
 use yaml_rust::Yaml;
 
 use super::grid::{Grid, Square, SquareStatus};
@@ -22,8 +21,7 @@ pub struct Puzzle {
 impl Puzzle {
     pub fn new(grid: &Rc<RefCell<Grid>>,
                row_run_lengths: &Vec<Vec<usize>>,
-               col_run_lengths: &Vec<Vec<usize>>)
-        -> Self
+               col_run_lengths: &Vec<Vec<usize>>) -> Self
     {
         let rows = (0..grid.borrow().height()).map(|y| Row::new(grid, Horizontal, y, &row_run_lengths[y]))
                                               .collect::<Vec<_>>();
@@ -38,8 +36,7 @@ impl Puzzle {
     pub fn width(&self) -> usize { self.grid.borrow().width() }
     pub fn height(&self) -> usize { self.grid.borrow().height() }
 
-    pub fn from_yaml(doc: &Yaml)
-        -> Puzzle
+    pub fn from_yaml(doc: &Yaml) -> Puzzle
     {
         let row_run_lengths = Self::_parse_row(&doc["rows"]);
         let col_run_lengths = Self::_parse_row(&doc["cols"]);
@@ -118,12 +115,11 @@ impl Puzzle {
 }
 impl fmt::Display for Puzzle {
     fn fmt(&self,
-           f: &mut fmt::Formatter)
-        -> fmt::Result
+           f: &mut fmt::Formatter) -> fmt::Result
     {
         let row_prefixes = self.rows.iter()
                                     .map(|row| row.runs.iter()
-                                                       .map(|run| run.length.to_string())
+                                                       .map(|run| run.to_string())
                                                        .collect::<Vec<_>>()
                                                        .join(" "))
                                     .collect::<Vec<_>>();

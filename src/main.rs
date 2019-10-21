@@ -33,12 +33,27 @@ cols:
     - 1 1
     - 8
 ";
+    /*let s = "
+rows:
+    - 1 1 3 1
+cols:
+    -
+    -
+    -
+    -
+    -
+    -
+    -
+    -
+    -
+    -
+";*/
     // note: column numbers are listed top to bottom
     let docs: Vec<Yaml> = YamlLoader::load_from_str(s).unwrap();
     let doc: &Yaml = &docs[0];
 
     let mut puzzle = Puzzle::from_yaml(doc);
     puzzle.solve();
-    println!("{:#?}", puzzle);
+    //println!("{:#?}", puzzle);
     println!("\n{}", puzzle);
 }

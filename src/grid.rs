@@ -1,5 +1,7 @@
 // vim: set ai et ts=4 sts=4:
 use std::fmt;
+use super::util::{Direction, Direction::*};
+use super::row::Run;
 
 #[derive(PartialEq, Copy, Clone, Debug)]
 pub enum SquareStatus {
@@ -10,17 +12,24 @@ pub enum SquareStatus {
 
 #[derive(PartialEq, Copy, Clone, Debug)]
 pub enum StatusError {
-    WasAlreadySet, // status was already filled in or crossed out, cannot be reverted to unknown
-    Conflicts,     // new status conflicts with existing (non-unknown) status
+    WasAlreadySet(SquareStatus),  // status was already filled in or crossed out, cannot be reverted to unknown
+    Conflicts(SquareStatus),      // new status conflicts with existing (non-unknown) status
+}
+#[derive(PartialEq, Copy, Clone, Debug)]
+pub enum RunAssignmentError {
+    Conflicts(Direction, usize),
 }
 
 type StatusResult = Result<(), StatusError>;
+type RunAssignmentResult = Result<(), RunAssignmentError>;
 
 #[derive(Debug)]
 pub struct Square {
     row: usize,
     col: usize,
     status: SquareStatus,
+    hrun_index: Option<usize>, // index of run in horizontal row that this square belongs to
+    vrun_index: Option<usize>, // ...             vertical   ...
 }
 
 impl Square {
@@ -29,6 +38,8 @@ impl Square {
             row: y,
             col: x,
             status: SquareStatus::Unknown,
+            hrun_index: None,
+            vrun_index: None,
         }
     }
 
@@ -38,21 +49,50 @@ impl Square {
 
     pub fn set_status(&mut self, new_status: SquareStatus) -> StatusResult {
         if self.status != SquareStatus::Unknown {
-            if new_status == SquareStatus::Unknown { return Err(StatusError::WasAlreadySet) }
-            if self.status != new_status           { return Err(StatusError::Conflicts);    }
+            if new_status == SquareStatus::Unknown { return Err(StatusError::WasAlreadySet(self.status)) }
+            if self.status != new_status           { return Err(StatusError::Conflicts(self.status));    }
         }
 
         self.status = new_status;
         return Ok(());
+    }
+
+    pub fn get_run_index(&self, direction: Direction) -> Option<usize> {
+        match direction {
+            Horizontal => self.hrun_index,
+            Vertical   => self.vrun_index,
+        }
+    }
+    pub fn assign_run(&mut self, run: &Run) -> RunAssignmentResult {
+        match run.direction {
+            Horizontal => {
+                if let Some(x) = self.hrun_index {
+                    if x != run.index { return Err(RunAssignmentError::Conflicts(run.direction, x)); }
+                }
+                self.hrun_index = Some(run.index);
+                return Ok(());
+            },
+            Vertical   => {
+                if let Some(x) = self.vrun_index {
+                    if x != run.index { return Err(RunAssignmentError::Conflicts(run.direction, x)); }
+                }
+                self.vrun_index = Some(run.index);
+                return Ok(());
+            },
+        }
     }
 }
 
 impl fmt::Display for Square {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", match self.status {
-            SquareStatus::CrossedOut => "x",
-            SquareStatus::FilledIn   => "\u{25A0}", // filled in black square
-            SquareStatus::Unknown    => "\u{26AC}", // medium circle, not filled in
+            //SquareStatus::CrossedOut => "x",
+            //SquareStatus::FilledIn   => "\u{25A0}", // filled in black square
+            //SquareStatus::Unknown    => "\u{26AC}", // medium circle, not filled in
+
+            SquareStatus::CrossedOut => " ",
+            SquareStatus::FilledIn   => "\u{25A0}",
+            SquareStatus::Unknown    => ".",
         })
     }
 }
@@ -75,6 +115,9 @@ impl Grid {
     pub fn height(&self) -> usize { self.squares.len() }
     pub fn get_square(&self, x: usize, y: usize) -> &Square {
         &self.squares[y][x]
+    }
+    pub fn get_square_mut(&mut self, x: usize, y: usize) -> &mut Square {
+        &mut self.squares[y][x]
     }
 }
 
