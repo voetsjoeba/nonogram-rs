@@ -44,17 +44,6 @@ impl Row {
                           .collect();
     }
 
-    pub fn complete_run(&self, run: &mut Run, at: usize)
-    {
-        if at > 0 {
-            self.get_square_mut(at-1).set_status(CrossedOut).expect("");
-        }
-        if at + run.length < self.length {
-            self.get_square_mut(at + run.length).set_status(CrossedOut).expect("");
-        }
-        run.completed = true;
-    }
-
     pub fn update_run_bounds(&mut self)
     {
         // update the min_start and max_start bounds of each run, given the current set of
