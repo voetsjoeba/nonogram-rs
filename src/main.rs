@@ -1,4 +1,5 @@
 // vim: set ai et ts=4 sts=4 sw=4:
+#![allow(dead_code, unused_imports)]
 mod util;
 mod puzzle;
 mod grid;

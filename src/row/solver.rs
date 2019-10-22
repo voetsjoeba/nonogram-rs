@@ -5,7 +5,7 @@ use std::cmp::{min, max};
 use std::rc::{Rc, Weak};
 use std::cell::{Ref, RefMut, RefCell};
 use std::collections::HashSet;
-use super::{Row, Field, Run};
+use super::{Row, Field, Run, DirectionalSequence};
 use super::super::util::{Direction, Direction::*};
 use super::super::grid::{Grid, Square, SquareStatus::{CrossedOut, FilledIn}};
 
@@ -42,6 +42,17 @@ impl Row {
                           .into_iter()
                           .map(|range| self.make_field(range.start, range.end-range.start))
                           .collect();
+    }
+
+    pub fn complete_run(&self, run: &mut Run, at: usize)
+    {
+        if at > 0 {
+            self.get_square_mut(at-1).set_status(CrossedOut).expect("");
+        }
+        if at + run.length < self.length {
+            self.get_square_mut(at + run.length).set_status(CrossedOut).expect("");
+        }
+        run.completed = true;
     }
 
     pub fn update_run_bounds(&mut self)
@@ -147,9 +158,9 @@ impl Row {
             }
         }
     }
-    pub fn fill_overlap(&self)
+    pub fn fill_overlap(&mut self)
     {
-        for run in &self.runs
+        for run in &mut self.runs
         {
             let max_start = run.max_start.unwrap();
             let min_start = run.min_start.unwrap();
@@ -160,19 +171,12 @@ impl Row {
                 let overlap_start = max_start;
                 let overlap_len   = run.length - diff;
                 for i in 0..overlap_len {
-                    let mut square: RefMut<Square> = self.get_square_mut(overlap_start+i);
+                    let mut square: RefMut<Square> = run.get_square_mut(overlap_start+i);
                     square.set_status(FilledIn).expect("Failed to set square state");
                     square.assign_run(run).expect("Failed to set square run");
                 }
                 if diff == 0 {
-                    // found exact match; cross out squares to the left and right
-                    // to isolate this run into its own field
-                    if overlap_start > 0 {
-                        self.get_square_mut(overlap_start-1).set_status(CrossedOut).expect("");
-                    }
-                    if overlap_start + overlap_len < self.length-1 {
-                        self.get_square_mut(overlap_start+overlap_len).set_status(CrossedOut).expect("");
-                    }
+                    run.complete(overlap_start);
                 }
             }
         }

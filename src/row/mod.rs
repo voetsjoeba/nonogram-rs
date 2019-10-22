@@ -12,6 +12,30 @@ use std::collections::HashSet;
 use super::util::{Direction, Direction::*};
 use super::grid::{Grid, Square, SquareStatus::{CrossedOut, FilledIn}};
 
+pub trait DirectionalSequence
+{
+    fn get_row_index(&self) -> usize;
+    fn get_direction(&self) -> Direction;
+    fn get_grid(&self) -> &Rc<RefCell<Grid>>;
+
+    fn square_index(&self, at: usize) -> (usize, usize) {
+        match self.get_direction() {
+            Horizontal => (at, self.get_row_index()),
+            Vertical   => (self.get_row_index(), at),
+        }
+    }
+    fn get_square(&self, index: usize) -> Ref<Square> {
+        let grid = self.get_grid().borrow();
+        let (x,y) = self.square_index(index);
+        Ref::map(grid, |g| g.get_square(x, y))
+    }
+    fn get_square_mut(&self, index: usize) -> RefMut<Square> {
+        let grid = self.get_grid().borrow_mut();
+        let (x,y) = self.square_index(index);
+        RefMut::map(grid, |g| g.get_square_mut(x, y))
+    }
+}
+
 #[derive(Debug)]
 pub struct Row {
     pub direction:  Direction,
@@ -45,29 +69,16 @@ impl Row {
             grid:      Rc::clone(grid),
         }
     }
-    pub fn range(&self) -> Range<usize> {
-        0..self.length
-    }
-
-    pub fn get_square(&self, index: usize) -> Ref<Square> {
-        let grid = self.grid.borrow();
-        match self.direction {
-            Horizontal => Ref::map(grid, |g| g.get_square(index, self.index) ),
-            Vertical   => Ref::map(grid, |g| g.get_square(self.index, index) ),
-        }
-    }
-    pub fn get_square_mut(&self, index: usize) -> RefMut<Square> {
-        let grid = self.grid.borrow_mut();
-        match self.direction {
-            Horizontal => RefMut::map(grid, |g| g.get_square_mut(index, self.index) ),
-            Vertical   => RefMut::map(grid, |g| g.get_square_mut(self.index, index) ),
-        }
-    }
 
     pub fn make_field(&self, offset: usize, length: usize) -> Field {
         Field::new(self.direction, offset, length, self.index, &self.grid)
     }
 
+}
+impl DirectionalSequence for Row {
+    fn get_row_index(&self) -> usize { self.index }
+    fn get_direction(&self) -> Direction { self.direction }
+    fn get_grid(&self)      -> &Rc<RefCell<Grid>> { &self.grid }
 }
 
 #[derive(Debug)]
@@ -80,7 +91,7 @@ pub struct Run {
     //
     pub min_start: Option<usize>,
     pub max_start: Option<usize>,
-    pub completed: bool,
+    completed: bool,
 }
 
 impl Run {
@@ -101,6 +112,23 @@ impl Run {
             completed: false,
         }
     }
+}
+impl Run {
+    pub fn complete(&mut self, at: usize) {
+        // found position for this run; cross out squares to the left and right of this run
+        if at > 0 {
+            self.get_square_mut(at-1).set_status(CrossedOut).expect("");
+        }
+        if at + self.length < self.length {
+            self.get_square_mut(at + self.length).set_status(CrossedOut).expect("");
+        }
+        self.completed = true;
+    }
+}
+impl DirectionalSequence for Run {
+    fn get_row_index(&self) -> usize { self.row_index }
+    fn get_direction(&self) -> Direction { self.direction }
+    fn get_grid(&self)      -> &Rc<RefCell<Grid>> { &self.grid }
 }
 impl fmt::Display for Run {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
