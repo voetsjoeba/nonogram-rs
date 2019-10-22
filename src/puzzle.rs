@@ -86,8 +86,10 @@ impl Puzzle {
 
 impl Puzzle {
     // helper functions for Puzzle::fmt
-    fn _fmt(&self) -> String
+    fn _fmt(&self, subdivision: Option<usize>)
+        -> String
     {
+        // if subdivision is given, insert visual subdivisor lines across the grid every Nth row/col
         let row_prefixes: Vec<Vec<ANSIString>> =
             self.rows.iter()
                      .map(|row| row.runs.iter()
@@ -108,7 +110,7 @@ impl Puzzle {
         let grid = self.grid.borrow();
 
         for i in (0..max_col_runs).rev() {
-            result.push_str(&self._fmt_header(i, prefix_len));
+            result.push_str(&self._fmt_header(i, prefix_len, subdivision));
         }
 
         // top board line
@@ -117,6 +119,7 @@ impl Puzzle {
             "\u{2554}",
             "\u{2557}",
             "\u{2564}",
+            subdivision,
             &(0..self.width()).map(|_| String::from("\u{2550}\u{2550}\u{2550}"))
                               .collect::<Vec<_>>()
         ));
@@ -128,21 +131,25 @@ impl Puzzle {
                 "\u{2551}",
                 "\u{2551}",
                 "\u{2502}",
+                subdivision,
                 &grid.squares[y].iter()
                                 .map(|s| format!(" {:1} ", s))
                                 .collect::<Vec<_>>()
             ));
 
-            // horizontal board separator line
-            if ((y+1) % 5 == 0) && (y != self.height()-1) {
-                result.push_str(&Self::_fmt_line(
-                    &ralign("", prefix_len),
-                    "\u{255F}",
-                    "\u{2562}",
-                    "\u{253C}",
-                    &(0..self.width()).map(|_| String::from("\u{2500}\u{2500}\u{2500}"))
-                                      .collect::<Vec<_>>()
-                ));
+            // horizontal subdivisor line
+            if let Some(subdiv) = subdivision {
+                if ((y+1) % subdiv == 0) && (y != self.height()-1) {
+                    result.push_str(&Self::_fmt_line(
+                        &ralign("", prefix_len),
+                        "\u{255F}",
+                        "\u{2562}",
+                        "\u{253C}",
+                        subdivision,
+                        &(0..self.width()).map(|_| String::from("\u{2500}\u{2500}\u{2500}"))
+                                          .collect::<Vec<_>>()
+                    ));
+                }
             }
         }
         // bottom board line
@@ -151,6 +158,7 @@ impl Puzzle {
             "\u{255A}",
             "\u{255D}",
             "\u{2567}",
+            subdivision,
             &(0..self.width()).map(|_| String::from("\u{2550}\u{2550}\u{2550}"))
                               .collect::<Vec<_>>()
         ));
@@ -162,21 +170,26 @@ impl Puzzle {
                  left_delim: &str,
                  right_delim: &str,
                  columnwise_separator: &str,
+                 subdivision: Option<usize>,
                  content_parts: &Vec<String>)
         -> String
     {
         let mut result = format!("{} {}", prefix, left_delim);
         for (idx, s) in content_parts.iter().enumerate() {
             result.push_str(s);
-            if ((idx+1) % 5 == 0) && (idx < content_parts.len()-1) {
-                result.push_str(columnwise_separator);
+            if let Some(subdiv) = subdivision {
+                if ((idx+1) % subdiv == 0) && (idx < content_parts.len()-1) {
+                    result.push_str(columnwise_separator);
+                }
             }
         }
         result.push_str(&format!("{}\n", right_delim));
         return result;
     }
 
-    fn _fmt_header(&self, line_idx: usize, prefix_len: usize)
+    fn _fmt_header(&self, line_idx: usize,
+                          prefix_len: usize,
+                          subdivision: Option<usize>)
         -> String
     {
         let mut content_parts = Vec::<String>::new();
@@ -197,13 +210,16 @@ impl Puzzle {
             " ",
             " ",
             " ",
+            subdivision,
             &content_parts
         )
     }
 }
 impl fmt::Display for Puzzle {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self._fmt())
+        //let subdivision = None;
+        let subdivision = Some(5);
+        write!(f, "{}", self._fmt(subdivision))
     }
 }
 
