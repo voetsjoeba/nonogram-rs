@@ -75,7 +75,7 @@ impl Puzzle {
                 row.infer_run_assignments();
             }
             for row in self.rows.iter_mut().chain(self.cols.iter_mut()) {
-                row.mark_completed_runs();
+                row.check_completed_runs();
                 row.check_completed();
             }
         }

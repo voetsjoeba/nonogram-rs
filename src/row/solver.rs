@@ -198,7 +198,7 @@ impl Row {
         }
     }
 
-    pub fn mark_completed_runs(&mut self)
+    pub fn check_completed_runs(&mut self)
     {
         // scan each field; if all squares in the field are assigned the same run,
         // (and the field has the same length as the run), then this run is complete.
@@ -237,15 +237,17 @@ impl Row {
         }
     }
 
-    pub fn check_completed(&self) {
+    pub fn check_completed(&mut self) {
         // if all runs in this row have been completed, clear out any remaining squares
-        if self.runs.iter().all(|r| r.is_completed()) {
+        if self.runs.iter().all(|r| r.is_completed())
+        {
             for x in 0..self.length {
                 let mut square: RefMut<Square> = self.get_square_mut(x);
                 if square.get_status() != FilledIn {
                     square.set_status(CrossedOut).expect("");
                 }
             }
+            self.completed = true;
         }
     }
 

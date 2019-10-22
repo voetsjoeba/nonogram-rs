@@ -44,6 +44,7 @@ pub struct Row {
     pub runs:       Vec<Run>,
     pub fields:     Vec<Field>,
     pub grid:       Rc<RefCell<Grid>>,
+    pub completed:  bool,
 }
 
 impl Row {
@@ -67,11 +68,15 @@ impl Row {
             runs:      runs,
             fields:    Vec::<Field>::new(),
             grid:      Rc::clone(grid),
+            completed: false,
         }
     }
 
     pub fn make_field(&self, offset: usize, length: usize) -> Field {
         Field::new(self.direction, offset, length, self.index, &self.grid)
+    }
+    pub fn is_completed(&self) -> bool {
+        self.completed
     }
 
 }
@@ -119,13 +124,10 @@ impl Run {
 impl Run {
     pub fn complete(&mut self, at: usize) {
         // found position for this run; cross out squares to the left and right of this run
-        println!("marking run {} of length {} as completed in {} row {}:", self.index, self.length, self.get_direction(), self.get_row_index());
         if at > 0 {
-            println!("  crossing out square {}", at);
             self.get_square_mut(at-1).set_status(CrossedOut).expect("");
         }
         if at + self.length < self.row_length {
-            println!("  crossing out square {}", at+self.length);
             self.get_square_mut(at + self.length).set_status(CrossedOut).expect("");
         }
         self.completed = true;
