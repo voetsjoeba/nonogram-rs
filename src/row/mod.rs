@@ -124,6 +124,9 @@ impl Run {
         }
         self.completed = true;
     }
+    pub fn is_completed(&self) -> bool {
+        self.completed
+    }
 }
 impl DirectionalSequence for Run {
     fn get_row_index(&self) -> usize { self.row_index }

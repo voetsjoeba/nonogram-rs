@@ -181,12 +181,14 @@ impl Row {
             }
         }
     }
-    pub fn mark_completed_runs(&mut self){
+    pub fn mark_completed_runs(&mut self)
+    {
         // scan each field; if all squares in the field are assigned the same run,
         // (and the field has the same length as the run), then this run is complete.
         let filled_ranges = self._ranges_of(|s| s.get_status() == FilledIn)
                                 .into_iter().collect::<Vec<_>>();
-        for range in filled_ranges {
+        for range in filled_ranges
+        {
             let mut unique_runs = HashSet::<usize>::new();
             for i in range.start..range.end {
                 if let Some(x) = self.get_square(i).get_run_index(self.direction) {
@@ -202,9 +204,17 @@ impl Row {
             if unique_runs.len() == 1 {
                 // assign run to all squares in this sequence
                 let run_index: usize = *unique_runs.iter().next().unwrap();
-                let run: &Run = &self.runs[run_index];
+                let run: &mut Run = &mut self.runs[run_index];
+
+                if run.is_completed() { continue; }
+
                 for i in range.start..range.end {
-                    self.get_square_mut(i).assign_run(&run).expect("");
+                    run.get_square_mut(i).assign_run(&run).expect("");
+                }
+                // if the range has the same length as the run, then we've found a completed run
+                if range.len() == run.length {
+                    println!("found new completed run of length {} in {} row {} at offset {}", run.length, self.direction, run.get_row_index(), range.start);
+                    run.complete(range.start);
                 }
             }
         }
