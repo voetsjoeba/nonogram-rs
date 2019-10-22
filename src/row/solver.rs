@@ -24,11 +24,14 @@ impl Row {
 
             // skip past squares for which the predicate does hold
             let range_start = x;
-            while x < self.length && pred(self.get_square(x)) { // TODO: first iteration runs pred twice :(
+            x += 1; // we already tested the predicate on x at the end of the previous loop
+            while x < self.length && pred(self.get_square(x)) {
                 x += 1;
             }
             let range_end = x;
             result.push(range_start..range_end);
+
+            x += 1;
         }
         result
     }
