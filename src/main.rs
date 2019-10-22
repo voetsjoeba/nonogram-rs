@@ -55,6 +55,4 @@ cols:
 
     let mut puzzle = Puzzle::from_yaml(doc);
     puzzle.solve();
-    //println!("{:#?}", puzzle);
-    println!("\n{}", puzzle);
 }

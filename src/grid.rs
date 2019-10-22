@@ -20,8 +20,32 @@ pub enum RunAssignmentError {
     Conflicts(Direction, usize),
 }
 
-type StatusResult = Result<(), StatusError>;
-type RunAssignmentResult = Result<(), RunAssignmentError>;
+pub struct StatusChange {
+    x: usize,
+    y: usize,
+    old: SquareStatus,
+    new: SquareStatus,
+}
+impl StatusChange {
+    fn new(sq: &Square, old: SquareStatus, new: SquareStatus) -> Self {
+        Self { x: sq.row, y: sq.col, old, new }
+    }
+}
+pub struct RunChange {
+    x: usize,
+    y: usize,
+    direction: Direction,
+    old: Option<usize>,
+    new: usize,
+}
+impl RunChange {
+    fn new(sq: &Square, direction: Direction, old: Option<usize>, new: usize) -> Self {
+        Self { x: sq.row, y: sq.col, direction, old, new }
+    }
+}
+
+type StatusResult = Result<StatusChange, StatusError>;
+type RunAssignmentResult = Result<RunChange, RunAssignmentError>;
 
 #[derive(Debug)]
 pub struct Square {
@@ -53,8 +77,9 @@ impl Square {
             if self.status != new_status           { return Err(StatusError::Conflicts(self.status));    }
         }
 
+        let change = StatusChange::new(&self, self.status, new_status);
         self.status = new_status;
-        return Ok(());
+        return Ok(change);
     }
 
     pub fn get_run_index(&self, direction: Direction) -> Option<usize> {
@@ -71,15 +96,17 @@ impl Square {
                 if let Some(x) = self.hrun_index {
                     if x != new_index { return Err(RunAssignmentError::Conflicts(direction, x)); }
                 }
+                let change = RunChange::new(&self, direction, self.hrun_index, new_index);
                 self.hrun_index = Some(new_index);
-                return Ok(());
+                return Ok(change);
             },
             Vertical   => {
                 if let Some(x) = self.vrun_index {
                     if x != new_index { return Err(RunAssignmentError::Conflicts(direction, x)); }
                 }
+                let change = RunChange::new(&self, direction, self.vrun_index, new_index);
                 self.vrun_index = Some(new_index);
-                return Ok(());
+                return Ok(change);
             },
         }
     }
@@ -91,10 +118,6 @@ impl Square {
 impl fmt::Display for Square {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", match self.status {
-            //SquareStatus::CrossedOut => "x",
-            //SquareStatus::FilledIn   => "\u{25A0}", // filled in black square
-            //SquareStatus::Unknown    => "\u{26AC}", // medium circle, not filled in
-
             SquareStatus::CrossedOut => " ",
             SquareStatus::FilledIn   => "\u{25A0}",
             SquareStatus::Unknown    => ".",

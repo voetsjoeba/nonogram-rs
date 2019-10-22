@@ -67,9 +67,11 @@ impl Puzzle {
     }
 
     pub fn solve(&mut self) {
-        // 1. update field definitions on each row (i.e. contiguous runs of non-crossedout squares)
-        // 2. update min_start and max_start values of each run
-        for _ in 0..5 {
+        // keep a queue of rows to be looked at, and run the individual solvers on each
+        // of them in sequence until there are none left in the queue. whenever a change
+        // is made to a square in the grid, those rows are added back into the queue
+        // for evaluation on the next run. completed runs are removed from the queue.
+        for _ in 0..6 {
             for row in self.rows.iter_mut().chain(self.cols.iter_mut()) {
                 row.recalculate_fields();
                 row.update_run_bounds();
@@ -80,7 +82,9 @@ impl Puzzle {
                 row.check_completed_runs();
                 row.check_completed();
             }
+            println!("\n{}", self);
         }
+        //println!("{:#?}", puzzle);
     }
 }
 
