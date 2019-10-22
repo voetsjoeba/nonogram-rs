@@ -9,6 +9,8 @@ use std::cmp::{min, max};
 use std::rc::{Rc, Weak};
 use std::cell::{Ref, RefMut, RefCell};
 use std::collections::HashSet;
+use ansi_term::{Colour, Style, ANSIString};
+
 use super::util::{Direction, Direction::*};
 use super::grid::{Grid, Square, SquareStatus::{CrossedOut, FilledIn}};
 
@@ -135,6 +137,13 @@ impl Run {
     pub fn is_completed(&self) -> bool {
         self.completed
     }
+    pub fn to_colored_string(&self) -> ANSIString {
+        let style = match self.completed {
+            true  => Style::new().fg(Colour::Fixed(241)),
+            false => Style::default(),
+        };
+        style.paint(self.to_string())
+    }
 }
 impl DirectionalSequence for Run {
     fn get_row_index(&self) -> usize { self.row_index }
@@ -143,7 +152,7 @@ impl DirectionalSequence for Run {
 }
 impl fmt::Display for Run {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.length)
+        write!(f, "{}", self.length.to_string())
     }
 }
 

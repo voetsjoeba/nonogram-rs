@@ -9,3 +9,4 @@ edition = "2018"
 [dependencies]
 libc = "*"
 yaml-rust = "0.4"
+ansi_term = "0.12"

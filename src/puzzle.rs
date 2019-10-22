@@ -1,12 +1,14 @@
 // vim: set ai et ts=4 sw=4 sts=4:
 use std::fmt;
+use std::io;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::convert::TryFrom;
 use yaml_rust::Yaml;
+use ansi_term::ANSIString;
 
 use super::grid::{Grid, Square, SquareStatus};
-use super::util::{ralign, Direction, Direction::*};
+use super::util::{ralign, lalign_colored, ralign_joined_coloreds, Direction, Direction::*, is_a_tty};
 use super::row::{Row, Run, Field};
 
 #[derive(Debug)]
@@ -84,120 +86,124 @@ impl Puzzle {
 
 impl Puzzle {
     // helper functions for Puzzle::fmt
-    fn _fmt_line(f: &mut fmt::Formatter,
-                 prefix: &str,
+    fn _fmt(&self) -> String
+    {
+        let row_prefixes: Vec<Vec<ANSIString>> =
+            self.rows.iter()
+                     .map(|row| row.runs.iter()
+                                        .map(|run| run.to_colored_string())
+                                        .collect::<Vec<_>>())
+                     .collect();
+
+        let prefix_len = row_prefixes.iter()
+                                     .map(|parts| parts.iter()
+                                                       .fold(0, |sum, ansi_str| sum + ansi_str.len() + 1) // note: .len() returns length WITHOUT ansi color escape sequences
+                                                  -1) // minus one at the end to match the length of a join(" ")
+                                     .max().unwrap();
+        let max_col_runs = self.cols.iter()
+                                    .map(|col| col.runs.len())
+                                    .max().unwrap();
+
+        let mut result = String::new();
+        let grid = self.grid.borrow();
+
+        for i in (0..max_col_runs).rev() {
+            result.push_str(&self._fmt_header(i, prefix_len));
+        }
+
+        // top board line
+        result.push_str(&Self::_fmt_line(
+            &ralign("", prefix_len),
+            "\u{2554}",
+            "\u{2557}",
+            "\u{2564}",
+            &(0..self.width()).map(|_| String::from("\u{2550}\u{2550}\u{2550}"))
+                              .collect::<Vec<_>>()
+        ));
+
+        for y in 0..self.height() {
+            // board content line
+            result.push_str(&Self::_fmt_line(
+                &ralign_joined_coloreds(&row_prefixes[y], prefix_len),
+                "\u{2551}",
+                "\u{2551}",
+                "\u{2502}",
+                &grid.squares[y].iter()
+                                .map(|s| format!(" {:1} ", s))
+                                .collect::<Vec<_>>()
+            ));
+
+            // horizontal board separator line
+            if ((y+1) % 5 == 0) && (y != self.height()-1) {
+                result.push_str(&Self::_fmt_line(
+                    &ralign("", prefix_len),
+                    "\u{255F}",
+                    "\u{2562}",
+                    "\u{253C}",
+                    &(0..self.width()).map(|_| String::from("\u{2500}\u{2500}\u{2500}"))
+                                      .collect::<Vec<_>>()
+                ));
+            }
+        }
+        // bottom board line
+        result.push_str(&Self::_fmt_line(
+            &ralign("", prefix_len),
+            "\u{255A}",
+            "\u{255D}",
+            "\u{2567}",
+            &(0..self.width()).map(|_| String::from("\u{2550}\u{2550}\u{2550}"))
+                              .collect::<Vec<_>>()
+        ));
+
+        return result;
+    }
+
+    fn _fmt_line(prefix: &str,
                  left_delim: &str,
                  right_delim: &str,
                  columnwise_separator: &str,
                  content_parts: &Vec<String>)
+        -> String
     {
-        write!(f, "{prefix} {left_delim}", prefix=prefix, left_delim=left_delim).expect("");
+        let mut result = format!("{} {}", prefix, left_delim);
         for (idx, s) in content_parts.iter().enumerate() {
-            write!(f, "{}", s).expect("");
+            result.push_str(s);
             if ((idx+1) % 5 == 0) && (idx < content_parts.len()-1) {
-                write!(f, "{}", columnwise_separator).expect("");
+                result.push_str(columnwise_separator);
             }
         }
-        write!(f, "{right_delim}\n", right_delim=right_delim).expect("");
+        result.push_str(&format!("{}\n", right_delim));
+        return result;
     }
 
-    fn _fmt_header(&self,
-                   line_idx: usize,
-                   prefix_len: usize,
-                   f: &mut fmt::Formatter)
+    fn _fmt_header(&self, line_idx: usize, prefix_len: usize)
+        -> String
     {
         let mut content_parts = Vec::<String>::new();
         for col in &self.cols {
             let part: String;
-
             if line_idx < col.runs.len() {
-                part = col.runs[col.runs.len()-1-line_idx].length.to_string();
+                let colored = col.runs[col.runs.len()-1-line_idx].to_colored_string();
+                part = format!(" {}", lalign_colored(&colored, 2));
             } else {
-                part = String::from("");
+                part = format!(" {:-2}", " ");
             }
 
-            content_parts.push(format!(" {:-2}", part));
+            content_parts.push(part);
         }
 
-        Self::_fmt_line(f,
-                        &ralign("", prefix_len),
-                        " ",
-                        " ",
-                        " ",
-                        &content_parts
+        Self::_fmt_line(
+            &ralign("", prefix_len),
+            " ",
+            " ",
+            " ",
+            &content_parts
         )
     }
 }
 impl fmt::Display for Puzzle {
-    fn fmt(&self,
-           f: &mut fmt::Formatter) -> fmt::Result
-    {
-        let row_prefixes = self.rows.iter()
-                                    .map(|row| row.runs.iter()
-                                                       .map(|run| run.to_string())
-                                                       .collect::<Vec<_>>()
-                                                       .join(" "))
-                                    .collect::<Vec<_>>();
-
-        let prefix_len = row_prefixes.iter()
-                                     .map(|x| x.len())
-                                     .max()
-                                     .unwrap();
-        let max_col_runs = self.cols.iter()
-                                    .map(|col| col.runs.len())
-                                    .max()
-                                    .unwrap();
-        let grid = self.grid.borrow();
-
-        for i in (0..max_col_runs).rev() {
-            self._fmt_header(i, prefix_len, f);
-        }
-
-        // top board line
-        Self::_fmt_line(f,
-                        &ralign("", prefix_len),
-                        "\u{2554}",
-                        "\u{2557}",
-                        "\u{2564}",
-                        &(0..self.width()).map(|_| String::from("\u{2550}\u{2550}\u{2550}"))
-                                          .collect::<Vec<_>>()
-        );
-
-        for y in 0..self.height() {
-            // board content line
-            Self::_fmt_line(f,
-                            &ralign(&row_prefixes[y], prefix_len),
-                            "\u{2551}",
-                            "\u{2551}",
-                            "\u{2502}",
-                            &grid.squares[y].iter()
-                                            .map(|s| format!(" {:1} ", s))
-                                            .collect::<Vec<_>>()
-            );
-
-            // horizontal board separator line
-            if ((y+1) % 5 == 0) && (y != self.height()-1) {
-                Self::_fmt_line(f,
-                                &ralign("", prefix_len),
-                                "\u{255F}",
-                                "\u{2562}",
-                                "\u{253C}",
-                                &(0..self.width()).map(|_| String::from("\u{2500}\u{2500}\u{2500}"))
-                                                  .collect::<Vec<_>>()
-                );
-            }
-        }
-        // bottom board line
-        Self::_fmt_line(f,
-                        &ralign("", prefix_len),
-                        "\u{255A}",
-                        "\u{255D}",
-                        "\u{2567}",
-                        &(0..self.width()).map(|_| String::from("\u{2550}\u{2550}\u{2550}"))
-                                          .collect::<Vec<_>>()
-        );
-
-        return Ok(())
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self._fmt())
     }
 }
 
