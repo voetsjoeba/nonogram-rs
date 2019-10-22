@@ -1,5 +1,6 @@
 // vim: set ai et ts=4 sw=4 sts=4:
 use std::fmt;
+use std::os::unix::io::AsRawFd;
 
 pub fn ralign(s: &str, width: usize) -> String {
     if s.len() >= width {
@@ -22,4 +23,10 @@ impl fmt::Display for Direction {
             Direction::Vertical   => "Vertical",
         })
     }
+}
+
+pub fn is_a_tty<T: AsRawFd>(handle: T) -> bool {
+	extern crate libc;
+	let fd = handle.as_raw_fd();
+    unsafe { libc::isatty(fd) != 0 }
 }
