@@ -49,21 +49,21 @@ pub struct Row {
 impl Row {
     pub fn new(grid: &Rc<RefCell<Grid>>,
                direction: Direction,
-               index: usize,
+               row_index: usize,
                run_lengths: &Vec<usize>) -> Self
     {
-        let length = match direction {
+        let row_length = match direction {
             Horizontal => grid.borrow().width(),
             Vertical   => grid.borrow().height(),
         };
         let runs = run_lengths.iter()
                               .enumerate()
-                              .map(|(i, &len)| Run::new(grid, direction, i, index, len))
+                              .map(|(i, &len)| Run::new(grid, direction, i, row_index, row_length, len))
                               .collect::<Vec<_>>();
         Row {
             direction: direction,
-            index:     index,
-            length:    length,
+            index:     row_index,
+            length:    row_length,
             runs:      runs,
             fields:    Vec::<Field>::new(),
             grid:      Rc::clone(grid),
@@ -87,6 +87,7 @@ pub struct Run {
     pub length: usize,
     pub index: usize,
     pub row_index: usize,
+    pub row_length: usize,
     pub grid: Rc<RefCell<Grid>>,
     //
     pub min_start: Option<usize>,
@@ -99,6 +100,7 @@ impl Run {
                direction: Direction,
                index: usize,
                row_index: usize,
+               row_length: usize,
                length: usize) -> Self
     {
         Run {
@@ -106,6 +108,7 @@ impl Run {
             length,
             index,
             row_index,
+            row_length,
             grid: Rc::clone(grid),
             min_start: None,
             max_start: None,
@@ -116,10 +119,13 @@ impl Run {
 impl Run {
     pub fn complete(&mut self, at: usize) {
         // found position for this run; cross out squares to the left and right of this run
+        println!("marking run {} of length {} as completed in {} row {}:", self.index, self.length, self.get_direction(), self.get_row_index());
         if at > 0 {
+            println!("  crossing out square {}", at);
             self.get_square_mut(at-1).set_status(CrossedOut).expect("");
         }
-        if at + self.length < self.length {
+        if at + self.length < self.row_length {
+            println!("  crossing out square {}", at+self.length);
             self.get_square_mut(at + self.length).set_status(CrossedOut).expect("");
         }
         self.completed = true;

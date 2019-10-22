@@ -181,6 +181,23 @@ impl Row {
             }
         }
     }
+    pub fn infer_run_assignments(&mut self)
+    {
+        let filled_ranges = self._ranges_of(|s| s.get_status() == FilledIn)
+                                .into_iter().collect::<Vec<_>>();
+
+        // if there are as many ranges of filled squares as there are runs,
+        // then there has to be a 1 to 1 mapping of runs to filled sequences
+        if filled_ranges.len() == self.runs.len() {
+            for (i, range) in filled_ranges.iter().enumerate() {
+                for x in range.start..range.end {
+                    let run: &Run = &self.runs[i];
+                    run.get_square_mut(x).assign_run(run).expect("");
+                }
+            }
+        }
+    }
+
     pub fn mark_completed_runs(&mut self)
     {
         // scan each field; if all squares in the field are assigned the same run,
@@ -213,8 +230,20 @@ impl Row {
                 }
                 // if the range has the same length as the run, then we've found a completed run
                 if range.len() == run.length {
-                    println!("found new completed run of length {} in {} row {} at offset {}", run.length, self.direction, run.get_row_index(), range.start);
+                    //println!("found new completed run of length {} in {} row {} at offset {}", run.length, self.direction, run.get_row_index(), range.start);
                     run.complete(range.start);
+                }
+            }
+        }
+    }
+
+    pub fn check_completed(&self) {
+        // if all runs in this row have been completed, clear out any remaining squares
+        if self.runs.iter().all(|r| r.is_completed()) {
+            for x in 0..self.length {
+                let mut square: RefMut<Square> = self.get_square_mut(x);
+                if square.get_status() != FilledIn {
+                    square.set_status(CrossedOut).expect("");
                 }
             }
         }
