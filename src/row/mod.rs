@@ -12,7 +12,7 @@ use std::collections::HashSet;
 use ansi_term::{Colour, Style, ANSIString};
 
 use super::util::{Direction, Direction::*};
-use super::grid::{Grid, Square, SquareStatus::{CrossedOut, FilledIn}};
+use super::grid::{Grid, Square, SquareStatus::{CrossedOut, FilledIn}, Change, Changes, Error};
 
 pub trait DirectionalSequence
 {
@@ -124,15 +124,21 @@ impl Run {
     }
 }
 impl Run {
-    pub fn complete(&mut self, at: usize) {
+    pub fn complete(&mut self, at: usize) -> Result<Changes, Error> {
         // found position for this run; cross out squares to the left and right of this run
+        let mut changes = Vec::<Change>::new();
         if at > 0 {
-            self.get_square_mut(at-1).set_status(CrossedOut).expect("");
+            if let Some(change) = self.get_square_mut(at-1).set_status(CrossedOut)? {
+                changes.push(Change::from(change));
+            }
         }
         if at + self.length < self.row_length {
-            self.get_square_mut(at + self.length).set_status(CrossedOut).expect("");
+            if let Some(change) = self.get_square_mut(at + self.length).set_status(CrossedOut)? {
+                changes.push(Change::from(change));
+            }
         }
         self.completed = true;
+        Ok(changes)
     }
     pub fn is_completed(&self) -> bool {
         self.completed

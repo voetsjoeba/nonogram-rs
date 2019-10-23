@@ -1,3 +1,4 @@
+// vim: set ai et ts=4 sts=4 sw=4:
 use std::fmt;
 use std::ops::Range;
 use std::convert::{TryInto, TryFrom};
@@ -7,7 +8,7 @@ use std::cell::{Ref, RefMut, RefCell};
 use std::collections::HashSet;
 use super::{Row, Field, Run, DirectionalSequence};
 use super::super::util::{Direction, Direction::*};
-use super::super::grid::{Grid, Square, SquareStatus::{CrossedOut, FilledIn}};
+use super::super::grid::{Grid, Square, SquareStatus::{CrossedOut, FilledIn}, Changes, Change, Error};
 
 impl Row {
     fn _ranges_of<P>(&self, pred: P) -> Vec<Range<usize>>
@@ -147,8 +148,9 @@ impl Row {
             }
         }
     }
-    pub fn fill_overlap(&mut self)
+    pub fn fill_overlap(&mut self) -> Result<Changes, Error>
     {
+        let mut changes = Vec::<Change>::new();
         for run in &mut self.runs
         {
             let max_start = run.max_start.unwrap();
@@ -161,38 +163,64 @@ impl Row {
                 let overlap_len   = run.length - diff;
                 for i in 0..overlap_len {
                     let mut square: RefMut<Square> = run.get_square_mut(overlap_start+i);
-                    square.set_status(FilledIn).expect("Failed to set square state");
-                    square.assign_run(run).expect("Failed to set square run");
+                    if let Some(change) = square.set_status(FilledIn)? {
+                        changes.push(Change::from(change));
+                    }
+                    if let Some(change) = square.assign_run(run)? {
+                        changes.push(Change::from(change));
+                    }
                 }
                 if diff == 0 {
-                    run.complete(overlap_start);
+                    changes.extend(run.complete(overlap_start)?);
                 }
             }
         }
+        /*if changes.len() > 0 {
+            println!("fill_overlap completed successfully; changes are:");
+            for c in changes.iter() {
+                println!("  {}", c);
+            }
+        }*/
+
+        Ok(changes)
     }
-    pub fn infer_run_assignments(&mut self)
+    pub fn infer_run_assignments(&mut self) -> Result<Changes, Error>
     {
+        let mut changes = Vec::<Change>::new();
         let filled_ranges = self._ranges_of(|s| s.get_status() == FilledIn)
                                 .into_iter().collect::<Vec<_>>();
 
         // if there are as many ranges of filled squares as there are runs,
         // then there has to be a 1 to 1 mapping of runs to filled sequences
-        if filled_ranges.len() == self.runs.len() {
+        if filled_ranges.len() == self.runs.len()
+        {
             for (i, range) in filled_ranges.iter().enumerate() {
                 for x in range.start..range.end {
                     let run: &Run = &self.runs[i];
-                    run.get_square_mut(x).assign_run(run).expect("");
+                    if let Some(change) = run.get_square_mut(x).assign_run(run)? {
+                        changes.push(Change::from(change));
+                    }
                 }
             }
         }
+        /*if changes.len() > 0 {
+            println!("infer_run_assignments completed successfully; changes are:");
+            for c in changes.iter() {
+                println!("  {}", c);
+            }
+        }*/
+
+        Ok(changes)
     }
 
-    pub fn check_completed_runs(&mut self)
+    pub fn check_completed_runs(&mut self) -> Result<Changes, Error>
     {
         // scan each field; if all squares in the field are assigned the same run,
         // (and the field has the same length as the run), then this run is complete.
+        let mut changes = Vec::<Change>::new();
         let filled_ranges = self._ranges_of(|s| s.get_status() == FilledIn)
                                 .into_iter().collect::<Vec<_>>();
+
         for range in filled_ranges
         {
             let mut unique_runs = HashSet::<usize>::new();
@@ -215,29 +243,38 @@ impl Row {
                 if run.is_completed() { continue; }
 
                 for i in range.start..range.end {
-                    run.get_square_mut(i).assign_run(&run).expect("");
+                    if let Some(change) = run.get_square_mut(i).assign_run(&run)? {
+                        changes.push(Change::from(change));
+                    }
                 }
                 // if the range has the same length as the run, then we've found a completed run
                 if range.len() == run.length {
                     //println!("found new completed run of length {} in {} row {} at offset {}", run.length, self.direction, run.get_row_index(), range.start);
-                    run.complete(range.start);
+                    changes.extend(run.complete(range.start)?);
                 }
             }
         }
+
+        Ok(changes)
     }
 
-    pub fn check_completed(&mut self) {
+    pub fn check_completed(&mut self) -> Result<Changes, Error> {
         // if all runs in this row have been completed, clear out any remaining squares
+        let mut changes = Vec::<Change>::new();
         if self.runs.iter().all(|r| r.is_completed())
         {
             for x in 0..self.length {
                 let mut square: RefMut<Square> = self.get_square_mut(x);
                 if square.get_status() != FilledIn {
-                    square.set_status(CrossedOut).expect("");
+                    if let Some(change) = square.set_status(CrossedOut)? {
+                        changes.push(Change::from(change));
+                    }
                 }
             }
             self.completed = true;
         }
+
+        Ok(changes)
     }
 
 }

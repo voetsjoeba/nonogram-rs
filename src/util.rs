@@ -31,7 +31,7 @@ pub fn ralign_joined_coloreds(strs: &Vec<ANSIString>, width: usize)
     format!("{}{}", " ".repeat(width-visual_len), joined_colored)
 }
 
-#[derive(PartialEq, Copy, Clone, Debug)]
+#[derive(PartialEq, Eq, Hash, Copy, Clone, Debug)]
 pub enum Direction {
     Horizontal,
     Vertical,

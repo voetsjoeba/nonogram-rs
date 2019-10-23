@@ -54,5 +54,7 @@ cols:
     let doc: &Yaml = &docs[0];
 
     let mut puzzle = Puzzle::from_yaml(doc);
-    puzzle.solve();
+    if let Err(x) = puzzle.solve() {
+        println!("Failed to solve puzzle!\n  {}", x);
+    }
 }

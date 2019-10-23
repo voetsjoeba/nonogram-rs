@@ -4,10 +4,11 @@ use std::io;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::convert::TryFrom;
+use std::collections::{VecDeque, HashSet};
 use yaml_rust::Yaml;
 use ansi_term::ANSIString;
 
-use super::grid::{Grid, Square, SquareStatus};
+use super::grid::{Grid, Square, SquareStatus, Change, Changes, Error};
 use super::util::{ralign, lalign_colored, ralign_joined_coloreds, Direction, Direction::*, is_a_tty};
 use super::row::{Row, Run, Field};
 
@@ -66,12 +67,69 @@ impl Puzzle {
         }
     }
 
-    pub fn solve(&mut self) {
+    pub fn solve(&mut self) -> Result<(), Error> {
         // keep a queue of rows to be looked at, and run the individual solvers on each
         // of them in sequence until there are none left in the queue. whenever a change
         // is made to a square in the grid, those rows are added back into the queue
         // for evaluation on the next run. completed runs are removed from the queue.
-        for _ in 0..6 {
+        println!("starting state:");
+        println!("\n{}", self);
+
+        let mut queue = VecDeque::<(Direction, usize)>::new();
+        queue.extend(self.rows.iter().map(|r| (r.direction, r.index)));
+        queue.extend(self.cols.iter().map(|c| (c.direction, c.index)));
+
+        while let Some((d,i)) = queue.pop_front()
+        {
+            let row = match d {
+                Horizontal => &mut self.cols[i],
+                Vertical   => &mut self.rows[i],
+            };
+            
+            let mut changes = Vec::<Change>::new();
+            row.recalculate_fields();
+            row.update_run_bounds();
+            changes.extend(row.fill_overlap()?);
+            changes.extend(row.infer_run_assignments()?);
+
+            changes.extend(row.check_completed_runs()?);
+            changes.extend(row.check_completed()?);
+
+            if changes.len() > 0 {
+                // we made changes to one or more squares in the grid; for each square that was affected,
+                // add the horizontal and vertical rows that cross it back into the queue for re-evaluation
+                let mut affected_rows = HashSet::<(Direction, usize)>::new();
+                for change in &changes {
+                    match change {
+                        Change::Status(x) => { affected_rows.insert((Horizontal, x.row));
+                                               affected_rows.insert((Vertical,   x.col)); },
+                        Change::Run(x)    => { affected_rows.insert((Horizontal, x.row));
+                                               affected_rows.insert((Vertical,   x.col)); },
+                    }
+                }
+
+                println!("finished solvers on {} row {}; changes were:", row.direction, i);
+                for change in &changes {
+                    println!("  {}", change);
+                }
+                println!("affected rows/columns added back to queue:");
+                for affected_row in &affected_rows {
+                    println!("  {} {}", match affected_row.0 {
+                        Horizontal => "row",
+                        Vertical   => "col",
+                    }, affected_row.1);
+                }
+
+                queue.extend(affected_rows.drain());
+
+                println!("\n{}", self);
+                println!("--------------------------------------");
+            }
+
+        }
+
+        Ok(())
+        /*for _ in 0..6 {
             for row in self.rows.iter_mut().chain(self.cols.iter_mut()) {
                 row.recalculate_fields();
                 row.update_run_bounds();
@@ -83,7 +141,7 @@ impl Puzzle {
                 row.check_completed();
             }
             println!("\n{}", self);
-        }
+        }*/
         //println!("{:#?}", puzzle);
     }
 }
