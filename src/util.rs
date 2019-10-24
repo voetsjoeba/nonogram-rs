@@ -1,5 +1,6 @@
 // vim: set ai et ts=4 sw=4 sts=4:
 use std::fmt;
+use std::io;
 use std::os::unix::io::AsRawFd;
 use ansi_term::ANSIString;
 
@@ -16,7 +17,10 @@ pub fn lalign_colored(s: &ANSIString, width: usize)
     if visual_len >= width {
         return s.to_string() // returns string WITH escape sequences
     }
-    format!("{}{}", s.to_string(), " ".repeat(width-visual_len))
+    format!("{}{}", match is_a_tty(io::stdout()) {
+        true  => s.to_string(),
+        false => (**s).to_string(), // deref once to get ANSIString, once more to get underlying str
+    }, " ".repeat(width-visual_len))
 }
 pub fn ralign_joined_coloreds(strs: &Vec<ANSIString>, width: usize)
     -> String
@@ -24,7 +28,13 @@ pub fn ralign_joined_coloreds(strs: &Vec<ANSIString>, width: usize)
     let mut visual_len: usize = strs.iter().map(|ansi_str| ansi_str.len()).sum(); // ANSIString.len() returns length WITHOUT escape sequences
     visual_len += strs.len()-1; // count the spaces that .join(" ") will add
 
-    let joined_colored = strs.iter().map(|astr| astr.to_string()).collect::<Vec<_>>().join(" ");
+    let joined_colored = strs.iter()
+                             .map(|astr| match is_a_tty(io::stdout()) {
+                                true  => astr.to_string(),
+                                false => (**astr).to_string(), // deref once to get ANSIString, once more to get underlying str
+                              })
+                             .collect::<Vec<_>>()
+                             .join(" ");
     if visual_len >= width {
         return joined_colored;
     }

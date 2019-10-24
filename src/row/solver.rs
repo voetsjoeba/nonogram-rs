@@ -8,7 +8,7 @@ use std::cell::{Ref, RefMut, RefCell};
 use std::collections::HashSet;
 use super::{Row, Field, Run, DirectionalSequence};
 use super::super::util::{Direction, Direction::*};
-use super::super::grid::{Grid, Square, SquareStatus::{CrossedOut, FilledIn}, Changes, Change, Error};
+use super::super::grid::{Grid, Square, SquareStatus::{CrossedOut, FilledIn}, Changes, Change, Error, HasGridLocation};
 
 impl Row {
     fn _ranges_of<P>(&self, pred: P) -> Vec<Range<usize>>

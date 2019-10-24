@@ -8,7 +8,7 @@ use std::collections::{VecDeque, HashSet};
 use yaml_rust::Yaml;
 use ansi_term::ANSIString;
 
-use super::grid::{Grid, Square, SquareStatus, Change, Changes, Error};
+use super::grid::{Grid, Square, SquareStatus, Change, Changes, Error, HasGridLocation};
 use super::util::{ralign, lalign_colored, ralign_joined_coloreds, Direction, Direction::*, is_a_tty};
 use super::row::{Row, Run, Field};
 
@@ -67,6 +67,10 @@ impl Puzzle {
         }
     }
 
+    pub fn is_completed(&self) -> bool {
+        self.rows.iter().all(|r| r.is_completed()) &&
+            self.cols.iter().all(|c| c.is_completed())
+    }
     pub fn solve(&mut self) -> Result<(), Error> {
         // keep a queue of rows to be looked at, and run the individual solvers on each
         // of them in sequence until there are none left in the queue. whenever a change
@@ -79,48 +83,55 @@ impl Puzzle {
         queue.extend(self.rows.iter().map(|r| (r.direction, r.index)));
         queue.extend(self.cols.iter().map(|c| (c.direction, c.index)));
 
+        let mut cur_iteration = 0usize;
+        let max_iterations = 100000usize;
         while let Some((d,i)) = queue.pop_front()
         {
-            let row = match d {
-                Horizontal => &mut self.cols[i],
-                Vertical   => &mut self.rows[i],
-            };
-            
+            cur_iteration += 1;
+            if cur_iteration >= max_iterations {
+                panic!("max iterations exceeded, aborting");
+            }
+
             let mut changes = Vec::<Change>::new();
-            row.recalculate_fields();
-            row.update_run_bounds();
-            changes.extend(row.fill_overlap()?);
-            changes.extend(row.infer_run_assignments()?);
+            {
+                let row = match d {
+                    Horizontal => &mut self.cols[i],
+                    Vertical   => &mut self.rows[i],
+                };
+                
+                row.recalculate_fields();
+                row.update_run_bounds();
+                changes.extend(row.fill_overlap()?);
+                changes.extend(row.infer_run_assignments()?);
 
-            changes.extend(row.check_completed_runs()?);
-            changes.extend(row.check_completed()?);
+                changes.extend(row.check_completed_runs()?);
+                changes.extend(row.check_completed()?);
+            }
 
-            if changes.len() > 0 {
-                // we made changes to one or more squares in the grid; for each square that was affected,
-                // add the horizontal and vertical rows that cross it back into the queue for re-evaluation
-                let mut affected_rows = HashSet::<(Direction, usize)>::new();
-                for change in &changes {
-                    match change {
-                        Change::Status(x) => { affected_rows.insert((Horizontal, x.row));
-                                               affected_rows.insert((Vertical,   x.col)); },
-                        Change::Run(x)    => { affected_rows.insert((Horizontal, x.row));
-                                               affected_rows.insert((Vertical,   x.col)); },
-                    }
-                }
-
-                println!("finished solvers on {} row {}; changes were:", row.direction, i);
+            if changes.len() > 0
+            {
+                println!("finished solvers on {} row {}; changes in this iteration:", d, i);
                 for change in &changes {
                     println!("  {}", change);
                 }
-                println!("affected rows/columns added back to queue:");
-                for affected_row in &affected_rows {
-                    println!("  {} {}", match affected_row.0 {
-                        Horizontal => "row",
-                        Vertical   => "col",
-                    }, affected_row.1);
+
+                // we made changes to one or more squares in the grid; for each square that was affected,
+                // add the horizontal and vertical rows that cross it back into the queue for re-evaluation
+                // (if they aren't already completed)
+                for change in &changes {
+                    let h_row = &self.rows[change.get_row()];
+                    let v_row = &self.cols[change.get_col()];
+
+                    if !h_row.is_completed() {
+                        let value = (h_row.direction, h_row.index);
+                        if !queue.contains(&value) { queue.push_back(value); }
+                    }
+                    if !v_row.is_completed() {
+                        let value = (v_row.direction, v_row.index);
+                        if !queue.contains(&value) { queue.push_back(value); }
+                    }
                 }
 
-                queue.extend(affected_rows.drain());
 
                 println!("\n{}", self);
                 println!("--------------------------------------");
@@ -128,21 +139,12 @@ impl Puzzle {
 
         }
 
+        if self.is_completed() {
+            println!("puzzle solved!");
+        } else {
+            println!("puzzle partially solved, out of actions.");
+        }
         Ok(())
-        /*for _ in 0..6 {
-            for row in self.rows.iter_mut().chain(self.cols.iter_mut()) {
-                row.recalculate_fields();
-                row.update_run_bounds();
-                row.fill_overlap();
-                row.infer_run_assignments();
-            }
-            for row in self.rows.iter_mut().chain(self.cols.iter_mut()) {
-                row.check_completed_runs();
-                row.check_completed();
-            }
-            println!("\n{}", self);
-        }*/
-        //println!("{:#?}", puzzle);
     }
 }
 

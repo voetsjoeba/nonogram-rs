@@ -55,6 +55,6 @@ cols:
 
     let mut puzzle = Puzzle::from_yaml(doc);
     if let Err(x) = puzzle.solve() {
-        println!("Failed to solve puzzle!\n  {}", x);
+        println!("\nFailed to solve puzzle!\n  {}", x);
     }
 }

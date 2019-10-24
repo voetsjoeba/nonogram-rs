@@ -4,6 +4,14 @@ use std::convert::From;
 use super::util::{Direction, Direction::*};
 use super::row::Run;
 
+pub trait HasGridLocation {
+    fn get_row(&self) -> usize;
+    fn get_col(&self) -> usize;
+    fn fmt_location(&self) -> String {
+        format!("(col={}, row={})", self.get_col(), self.get_row())
+    }
+}
+
 #[derive(PartialEq, Eq, Hash, Copy, Clone, Debug)]
 pub enum SquareStatus {
     FilledIn,
@@ -13,12 +21,14 @@ pub enum SquareStatus {
 impl fmt::Display for SquareStatus {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", match *self {
-            SquareStatus::FilledIn => "FilledIn",
+            SquareStatus::FilledIn   => "FilledIn",
             SquareStatus::CrossedOut => "CrossedOut",
-            SquareStatus::Unknown => "Unknown",
+            SquareStatus::Unknown    => "Unknown",
         })
     }
 }
+
+// ------------------------------------------------
 
 #[derive(PartialEq, Debug)]
 pub struct StatusChange {
@@ -32,15 +42,20 @@ impl StatusChange {
         Self { row: sq.row, col: sq.col, old, new }
     }
 }
+impl HasGridLocation for StatusChange {
+    fn get_row(&self) -> usize { self.row }
+    fn get_col(&self) -> usize { self.col }
+}
 impl fmt::Display for StatusChange {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Change: in square (col={}, row={}), status was changed from {} to {}",
-            self.col,
-            self.row,
+        write!(f, "Change: in square {}, status was changed from {} to {}",
+            self.fmt_location(),
             self.old,
             self.new)
     }
 }
+
+// ------------------------------------------------
 
 #[derive(PartialEq, Debug)]
 pub struct RunChange {
@@ -55,11 +70,14 @@ impl RunChange {
         Self { row: sq.row, col: sq.col, direction, old, new }
     }
 }
+impl HasGridLocation for RunChange {
+    fn get_row(&self) -> usize { self.row }
+    fn get_col(&self) -> usize { self.col }
+}
 impl fmt::Display for RunChange {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Change: in square (col={}, row={}), {} run index was changed from {} to {}",
-            self.col,
-            self.row,
+        write!(f, "Change: in square {}, {} run index was changed from {} to {}",
+            self.fmt_location(),
             self.direction,
             match self.old {
                 None    => "None".to_string(),
@@ -68,6 +86,8 @@ impl fmt::Display for RunChange {
             self.new)
     }
 }
+
+// ------------------------------------------------
 
 pub enum Change {
     Status(StatusChange),
@@ -81,6 +101,20 @@ impl From<StatusChange> for Change {
 impl From<RunChange> for Change {
     fn from(other: RunChange) -> Self {
         Change::Run(other)
+    }
+}
+impl HasGridLocation for Change {
+    fn get_row(&self) -> usize {
+        match self {
+            Change::Status(x) => x.get_row(),
+            Change::Run(x)    => x.get_row(),
+        }
+    }
+    fn get_col(&self) -> usize {
+        match self {
+            Change::Status(x) => x.get_col(),
+            Change::Run(x)    => x.get_col(),
+        }
     }
 }
 impl fmt::Display for Change {
@@ -103,8 +137,8 @@ impl fmt::Display for StatusError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "StatusError: {}", match self {
             StatusError::ChangeRejected(change, msg) =>
-                format!("In (col={}, row={}), attempt to change status from {} to {} was rejected: {}",
-                    change.col, change.row, change.old, change.new, msg),
+                format!("In {}, attempt to change status from {} to {} was rejected: {}",
+                    change.fmt_location(), change.old, change.new, msg),
         })
     }
 }
@@ -117,8 +151,8 @@ impl fmt::Display for RunError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "RunError: {}", match self {
             RunError::ChangeRejected(change, msg) =>
-                format!("In (col={}, row={}), attempt to change {} run index from {} to {} was rejected: {}",
-                    change.col, change.row, change.direction, match change.old {
+                format!("In {}, attempt to change {} run index from {} to {} was rejected: {}",
+                    change.fmt_location(), change.direction, match change.old {
                         Some(x) => x.to_string(),
                         None    => "None".to_string(),
                     }, change.new, msg),
@@ -154,9 +188,6 @@ impl fmt::Display for Error {
 
 // ------------------------------------------------
 
-
-// ------------------------------------------------
-
 #[derive(Debug)]
 pub struct Square {
     row: usize,
@@ -165,7 +196,6 @@ pub struct Square {
     hrun_index: Option<usize>, // index of run in horizontal row that this square belongs to
     vrun_index: Option<usize>, // ...             vertical   ...
 }
-
 impl Square {
     pub fn new(x: usize, y: usize) -> Square {
         Square {
@@ -242,17 +272,25 @@ impl Square {
     pub fn assign_run(&mut self, run: &Run) -> RunResult {
         self.set_run_index(run.direction, run.index)
     }
-}
-
-impl fmt::Display for Square {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", match self.status {
+    pub fn fmt_visual(&self) -> &str {
+        match self.status {
             SquareStatus::CrossedOut => " ",
             SquareStatus::FilledIn   => "\u{25A0}",
             SquareStatus::Unknown    => ".",
-        })
+        }
     }
 }
+impl fmt::Display for Square {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.fmt_visual())
+    }
+}
+impl HasGridLocation for Square {
+    fn get_row(&self) -> usize { self.row }
+    fn get_col(&self) -> usize { self.col }
+}
+
+// ------------------------------------------------
 
 pub struct Grid {
     pub squares: Vec<Vec<Square>>,
