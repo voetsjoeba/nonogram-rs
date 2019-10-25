@@ -2,7 +2,7 @@
 use std::fmt;
 use std::io;
 use std::rc::Rc;
-use std::cell::RefCell;
+use std::cell::{Ref, RefCell};
 use std::convert::TryFrom;
 use std::collections::{VecDeque, HashSet};
 use yaml_rust::Yaml;
@@ -146,6 +146,20 @@ impl Puzzle {
             println!("puzzle solved!");
         } else {
             println!("puzzle partially solved, out of actions.");
+            println!("run assignment overview:");
+            let grid = self.grid.borrow();
+            for x in 0..self.width() {
+                for y in 0..self.height() {
+                    let square: &Square = grid.get_square(x, y);
+                    if square.get_status() == SquareStatus::FilledIn {
+                        println!("  {}: hrun_index={}, vrun_index={}",
+                            square.fmt_location(),
+                            if let Some(idx) = square.get_run_index(Direction::Horizontal) { idx.to_string() } else { "None".to_string() },
+                            if let Some(idx) = square.get_run_index(Direction::Vertical) { idx.to_string() } else { "None".to_string() }
+                        );
+                    }
+                }
+            }
         }
         Ok(())
     }

@@ -150,6 +150,12 @@ impl Run {
         };
         style.paint(self.to_string())
     }
+    pub fn is_possible_start_position(&self, start: usize) -> bool {
+        // returns true if this run has its min/max_start bounds set, and the given
+        // starting position falls within that range
+        self.min_start.is_some() && self.max_start.is_some() &&
+        self.min_start.unwrap() <= start && start <= self.max_start.unwrap()
+    }
 }
 impl DirectionalSequence for Run {
     fn get_row_index(&self) -> usize { self.row_index }
