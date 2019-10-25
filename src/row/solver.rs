@@ -215,8 +215,10 @@ impl Row {
 
     pub fn check_completed_runs(&mut self) -> Result<Changes, Error>
     {
-        // scan each field; if all squares in the field are assigned the same run,
-        // (and the field has the same length as the run), then this run is complete.
+        // scan for attached sequences of filled in squares; for each sequence,
+        // if any of the squares have a run assigned, then expand that run to all other squares
+        // in the sequence. also, if the length of the sequence is the same as that of the run
+        // it was assigned, then the run is complete.
         let mut changes = Vec::<Change>::new();
         let filled_ranges = self._ranges_of(|s| s.get_status() == FilledIn)
                                 .into_iter().collect::<Vec<_>>();
@@ -243,7 +245,7 @@ impl Row {
                 if run.is_completed() { continue; }
 
                 for i in range.start..range.end {
-                    if let Some(change) = run.get_square_mut(i).assign_run(&run)? {
+                    if let Some(change) = run.get_square_mut(i).assign_run(run)? {
                         changes.push(Change::from(change));
                     }
                 }

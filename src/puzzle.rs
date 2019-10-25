@@ -95,8 +95,8 @@ impl Puzzle {
             let mut changes = Vec::<Change>::new();
             {
                 let row = match d {
-                    Horizontal => &mut self.cols[i],
-                    Vertical   => &mut self.rows[i],
+                    Horizontal => &mut self.rows[i],
+                    Vertical   => &mut self.cols[i],
                 };
                 
                 row.recalculate_fields();
@@ -108,6 +108,9 @@ impl Puzzle {
                 changes.extend(row.check_completed()?);
             }
 
+            if changes.len() == 0 {
+                println!("finished solvers on {} row {}; no changes", d, i);
+            }
             if changes.len() > 0
             {
                 println!("finished solvers on {} row {}; changes in this iteration:", d, i);
