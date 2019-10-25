@@ -92,6 +92,7 @@ impl Puzzle {
                 panic!("max iterations exceeded, aborting");
             }
 
+            println!("starting solvers on {} row {}", d, i);
             let mut changes = Vec::<Change>::new();
             {
                 let row = match d {

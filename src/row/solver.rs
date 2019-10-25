@@ -220,6 +220,34 @@ impl Row {
             }
         }
 
+        // now look for cases where a filled in square with a known run is positioned beyond the max_start of that run;
+        // in that case, all squares from max_start up until that square can be filled in
+        for run in &self.runs {
+            //println!("  infer_run_assignments: finding last square assigned to run {} (len {})", run.index, run.length);
+            let max_start = run.max_start.unwrap();
+            // find last filled in square with this run assigned, if any
+            let last_assigned_opt =
+                (0..self.length).filter(|&x| self.get_square(x).has_run_assigned(run)) // filled in is implied by having a run assigned
+                                .last();
+
+            if let Some(last_assigned) = last_assigned_opt {
+                //println!("  infer_run_assignments: last square assigned to run {} (len {}) is at position {}", run.index, run.length, last_assigned);
+                //println!("  infer_run_assignments: max_start of run is {}", max_start);
+                if last_assigned > max_start {
+                    //println!("  infer_run_assignments: last square lies beyond max_start of run, filling in positions {} through {}", max_start, last_assigned-1);
+                    // fill in square from max_start to x
+                    for x in max_start..last_assigned {
+                        if let Some(change) = self.get_square_mut(x).set_status(FilledIn)? {
+                            changes.push(Change::from(change));
+                        }
+                        if let Some(change) = self.get_square_mut(x).assign_run(run)? {
+                            changes.push(Change::from(change));
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(changes)
     }
 

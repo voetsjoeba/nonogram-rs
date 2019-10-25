@@ -282,6 +282,9 @@ impl Square {
     pub fn assign_run(&mut self, run: &Run) -> RunResult {
         self.set_run_index(run.direction, run.index)
     }
+    pub fn has_run_assigned(&self, run: &Run) -> bool {
+        self.get_run_index(run.direction) == Some(run.index)
+    }
     pub fn fmt_visual(&self) -> &str {
         match self.status {
             SquareStatus::CrossedOut => " ",
