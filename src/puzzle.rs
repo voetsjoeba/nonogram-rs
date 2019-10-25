@@ -98,14 +98,18 @@ impl Puzzle {
                     Horizontal => &mut self.rows[i],
                     Vertical   => &mut self.cols[i],
                 };
-                
-                row.recalculate_fields();
-                row.update_run_bounds();
-                changes.extend(row.fill_overlap()?);
-                changes.extend(row.infer_run_assignments()?);
 
+                // before doing any further work, check whether this row is already_completed
+                // (includes handling of trivial cases like empty rows etc)
                 changes.extend(row.check_completed_runs()?);
                 changes.extend(row.check_completed()?);
+
+                if !row.is_completed() {
+                    row.recalculate_fields();
+                    row.update_run_bounds();
+                    changes.extend(row.fill_overlap()?);
+                    changes.extend(row.infer_run_assignments()?);
+                }
             }
 
             if changes.len() == 0 {
@@ -120,19 +124,14 @@ impl Puzzle {
 
                 // we made changes to one or more squares in the grid; for each square that was affected,
                 // add the horizontal and vertical rows that cross it back into the queue for re-evaluation
-                // (if they aren't already completed)
                 for change in &changes {
                     let h_row = &self.rows[change.get_row()];
                     let v_row = &self.cols[change.get_col()];
 
-                    if !h_row.is_completed() {
-                        let value = (h_row.direction, h_row.index);
-                        if !queue.contains(&value) { queue.push_back(value); }
-                    }
-                    if !v_row.is_completed() {
-                        let value = (v_row.direction, v_row.index);
-                        if !queue.contains(&value) { queue.push_back(value); }
-                    }
+                    let h_value = (h_row.direction, h_row.index);
+                    let v_value = (v_row.direction, v_row.index);
+                    if !queue.contains(&v_value) { queue.push_back(v_value); }
+                    if !queue.contains(&h_value) { queue.push_back(h_value); }
                 }
 
 
@@ -141,6 +140,9 @@ impl Puzzle {
             }
 
         }
+
+        println!("final state:");
+        println!("\n{}", self);
 
         if self.is_completed() {
             println!("puzzle solved!");

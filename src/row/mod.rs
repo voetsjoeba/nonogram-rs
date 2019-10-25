@@ -80,7 +80,6 @@ impl Row {
     pub fn is_completed(&self) -> bool {
         self.completed
     }
-
 }
 impl DirectionalSequence for Row {
     fn get_row_index(&self) -> usize { self.index }

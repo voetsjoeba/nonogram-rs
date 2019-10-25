@@ -277,20 +277,33 @@ impl Row {
         Ok(changes)
     }
 
+    #[allow(unused_parens)]
     pub fn check_completed(&mut self) -> Result<Changes, Error> {
         // if all runs in this row have been completed, clear out any remaining squares
+        // (also handles cases where the row is empty or only has 0-length runs)
         let mut changes = Vec::<Change>::new();
-        if self.runs.iter().all(|r| r.is_completed())
+        let is_trivially_empty: bool = (self.runs.is_empty() || self.runs.iter().all(|r| r.length == 0));
+        
+        if is_trivially_empty || self.runs.iter().all(|r| r.is_completed())
         {
             for x in 0..self.length {
                 let mut square: RefMut<Square> = self.get_square_mut(x);
-                if square.get_status() != FilledIn {
+                // if this row is empty, cross out everything; otherwise, only cross out whatever wasn't already crossed out
+                if is_trivially_empty || square.get_status() != FilledIn {
                     if let Some(change) = square.set_status(CrossedOut)? {
                         changes.push(Change::from(change));
                     }
                 }
             }
             self.completed = true;
+        }
+
+        // just for proper visual coloring when printing out a puzzle with 0-length runs, mark all 0-runs completed
+        if is_trivially_empty {
+            for run in &mut self.runs {
+                assert!(run.length == 0);
+                run.completed = true;
+            }
         }
 
         Ok(changes)
