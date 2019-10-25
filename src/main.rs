@@ -5,52 +5,23 @@ mod puzzle;
 mod grid;
 mod row;
 
+use std::fs;
+use std::env;
+use std::process::exit;
 use std::vec::Vec;
 use yaml_rust::{YamlLoader, Yaml};
 use self::puzzle::Puzzle;
 
 fn main() {
-    let s = "
-rows:
-    - 5
-    - 1 4
-    - 1 1 1
-    - 1 1 1 1
-    - 1 1 1 1
-    - 1 1 3 1
-    - 1 1 1
-    - 1 1 1
-    - 3 4 1
-    - 3 3
-cols:
-    - 8
-    - 1 1
-    - 1 1 5
-    - 1 1
-    - 1 2 2
-    - 2 1 1
-    - 5 1
-    - 1 2
-    - 1 1
-    - 8
-";
-    /*let s = "
-rows:
-    - 1 1 3 1
-cols:
-    -
-    -
-    -
-    -
-    -
-    -
-    -
-    -
-    -
-    -
-";*/
+    let args: Vec<String> = env::args().collect();
+    if args.len() < 2 {
+        println!("Missing argument: filename");
+        exit(1);
+    }
+    let contents = fs::read_to_string(&args[1]).expect("Failed to read input file");
+
     // note: column numbers are listed top to bottom
-    let docs: Vec<Yaml> = YamlLoader::load_from_str(s).unwrap();
+    let docs: Vec<Yaml> = YamlLoader::load_from_str(&contents).unwrap();
     let doc: &Yaml = &docs[0];
 
     let mut puzzle = Puzzle::from_yaml(doc);
