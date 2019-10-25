@@ -49,6 +49,8 @@ impl Row {
     {
         // update the min_start and max_start bounds of each run, given the current set of
         // fields in the row.
+        // NOTE: each run might already have an existing min_start and max_value value from previous
+        // solver iterations; we should only further refine them, not reset them.
         assert!(self.fields.len() > 0, "No fields exist in this row!");
 
         // L -> R scan: for each run in sequence, find the first field that can contain it
@@ -56,20 +58,23 @@ impl Row {
         let mut candidate_position: usize = 0;
         for run in &mut self.runs
         {
-            run.min_start = None;
+            // start off from previously set min_start, if any
+            if let Some(existing_min_start) = run.min_start {
+                candidate_position = max(candidate_position, existing_min_start);
+            }
             while current_field < self.fields.len() {
                 let field: &Field = &self.fields[current_field];
-                // we started evaluating a new field; skip ahead to the start of this field
+                // we started evaluating a new field; skip ahead to the start of this field if necessary
                 candidate_position = max(candidate_position, field.offset);
-                let shift = candidate_position - field.offset; // relative offset within this field
+                let shift = candidate_position - field.offset; // are we at a relative offset within this field?
                 if ! field.run_lfits_at(run, shift) {
-                    // not enough space (or space left) in this field, try the next one
+                    // not enough space (or space left) in this field, move on to the next one
                     current_field += 1;
                     continue;
                 }
 
                 // field has enough space to contain the run; place this run and start evaluating the next
-                // one, but stay in this field (it may still have space left to contain the next one)
+                // one, but stay in this field (it may still have space left to contain the next run)
                 run.min_start = Some(candidate_position);
                 candidate_position += run.length + 1;
 
@@ -86,15 +91,18 @@ impl Row {
 
         // R -> L scan: for each run in sequence, find the last field that can contain it
         let mut current_field: isize = (self.fields.len() - 1).try_into().unwrap();
-        let mut candidate_end_position: isize = (self.length).try_into().unwrap();
+        let mut candidate_end_position: isize = (self.length).try_into().unwrap(); // exclusive!
 
         for run in self.runs.iter_mut().rev()
         {
-            run.max_start = None;
-            //for field in self.fields.iter().rev() {
+            // start off from previously set max_start, if any
+            if let Some(existing_max_start) = run.max_start {
+                candidate_end_position = min(candidate_end_position,
+                                             isize::try_from(existing_max_start).unwrap() + isize::try_from(run.length).unwrap());
+            }
             while current_field >= 0 {
                 let field: &Field = &self.fields[usize::try_from(current_field).unwrap()];
-                let field_end: isize = (field.offset+field.length).try_into().unwrap();
+                let field_end: isize = (field.offset+field.length).try_into().unwrap(); // exclusive
 
                 candidate_end_position = min(candidate_end_position, field_end);
                 let rshift = field_end - candidate_end_position;
@@ -195,13 +203,17 @@ impl Row {
         // (should always be at least one).
         // because these are attached sequences, if ANY of the squares within a sequence falls within the
         // range of only a single run, then the whole sequence must be part of that run and we can assign it.
+        //
+        // after assigning a run to a square, update that run's min_start and max_start positions as well,
+        // since those might have tightened up now.
         for range in filled_ranges
         {
-            let mut single_run: Option<&Run> = None;
+            let mut single_run: Option<usize> = None;
             for x in range.start..range.end {
-                let possible_runs: Vec<&Run> = self.runs.iter()
-                                                        .filter(|r| r.might_contain_position(x))
-                                                        .collect::<Vec<_>>();
+                let possible_runs: Vec<usize> = self.runs.iter()
+                                                         .filter(|r| r.might_contain_position(x))
+                                                         .map(|r| r.index)
+                                                         .collect();
                 if possible_runs.len() == 0 {
                     panic!("Inconsistency: no run found that can encompass the sequence of filled squares [{}, {}] in {} row {}", range.start, range.end-1, self.direction, self.index);
                 }
@@ -211,40 +223,28 @@ impl Row {
                     break;
                 }
             }
-            if let Some(run) = single_run {
+            if let Some(idx) = single_run {
+                let run = &self.runs[idx];
+                println!("  infer_run_assignments: found singular run assignment for sequence [{}, {}]: run {} (len {})", range.start, range.end-1, run.index, run.length);
+
                 for i in range.start..range.end {
                     if let Some(change) = self.get_square_mut(i).assign_run(run)? {
                         changes.push(Change::from(change));
                     }
                 }
-            }
-        }
 
-        // now look for cases where a filled in square with a known run is positioned beyond the max_start of that run;
-        // in that case, all squares from max_start up until that square can be filled in
-        for run in &self.runs {
-            //println!("  infer_run_assignments: finding last square assigned to run {} (len {})", run.index, run.length);
-            let max_start = run.max_start.unwrap();
-            // find last filled in square with this run assigned, if any
-            let last_assigned_opt =
-                (0..self.length).filter(|&x| self.get_square(x).has_run_assigned(run)) // filled in is implied by having a run assigned
-                                .last();
+                // update min_start and max_start of the run given that we've now potentially found new squares assigned
+                // to it; update_run_bounds and fill_overlap will pick up these new values in the next iteration(s).
+                // (note: have to dip into signed arithmetic for a second because the second argument to max() may be negative
+                let run = &mut self.runs[idx];
+                run.min_start = Some(usize::try_from(
+                    max(isize::try_from(run.min_start.unwrap()).unwrap(),
+                        isize::try_from(range.end).unwrap() - isize::try_from(run.length).unwrap())
+                ).unwrap());
+                run.max_start = Some(min(run.max_start.unwrap(), range.start));
 
-            if let Some(last_assigned) = last_assigned_opt {
-                //println!("  infer_run_assignments: last square assigned to run {} (len {}) is at position {}", run.index, run.length, last_assigned);
-                //println!("  infer_run_assignments: max_start of run is {}", max_start);
-                if last_assigned > max_start {
-                    //println!("  infer_run_assignments: last square lies beyond max_start of run, filling in positions {} through {}", max_start, last_assigned-1);
-                    // fill in square from max_start to x
-                    for x in max_start..last_assigned {
-                        if let Some(change) = self.get_square_mut(x).set_status(FilledIn)? {
-                            changes.push(Change::from(change));
-                        }
-                        if let Some(change) = self.get_square_mut(x).assign_run(run)? {
-                            changes.push(Change::from(change));
-                        }
-                    }
-                }
+                //println!("  infer_run_assignments: updated min_start of run {} to {}", run.index, run.min_start.unwrap());
+                //println!("  infer_run_assignments: updated max_start of run {} to {}", run.index, run.max_start.unwrap());
             }
         }
 
