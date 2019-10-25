@@ -191,26 +191,19 @@ impl Row {
                                 .into_iter().collect::<Vec<_>>();
 
         // look through this row for contiguous ("attached") sequences of filled squares;
-        // for each one found, see whether it falls within any of the runs' min_start and max_start
-        // ranges (should always be at least one).
-        // because these are attached sequences, if ANY of the squares within the sequence falls within the
+        // for each one found, see whether it falls within any of the runs' possible range of squares
+        // (should always be at least one).
+        // because these are attached sequences, if ANY of the squares within a sequence falls within the
         // range of only a single run, then the whole sequence must be part of that run and we can assign it.
         for range in filled_ranges
         {
-            // find runs in this row where run.min_start <= range[0] <= run.max_start
-            //let possible_runs: Vec<Vec<&Run>> =
-            //    range.map(|x| self.runs.iter()
-            //                           .filter(|r| r.is_possible_start_position(x))
-            //                           .collect::<Vec<_>>())
-            //         .collect();
-
             let mut single_run: Option<&Run> = None;
             for x in range.start..range.end {
                 let possible_runs: Vec<&Run> = self.runs.iter()
-                                                        .filter(|r| r.is_possible_start_position(x))
+                                                        .filter(|r| r.might_contain_position(x))
                                                         .collect::<Vec<_>>();
                 if possible_runs.len() == 0 {
-                    panic!("inconsistency: no run found that can encompass the sequence of filled squares in {} row {} between indices {} and {} (incl.)", self.direction, self.index, range.start, range.end);
+                    panic!("Inconsistency: no run found that can encompass the sequence of filled squares [{}, {}] in {} row {}", range.start, range.end-1, self.direction, self.index);
                 }
                 if possible_runs.len() == 1 {
                     // only one run could possibly encompass this sequence of filled squares; assign it to all of them

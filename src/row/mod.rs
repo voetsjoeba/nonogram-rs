@@ -149,11 +149,11 @@ impl Run {
         };
         style.paint(self.to_string())
     }
-    pub fn is_possible_start_position(&self, start: usize) -> bool {
+    pub fn might_contain_position(&self, pos: usize) -> bool {
         // returns true if this run has its min/max_start bounds set, and the given
         // starting position falls within that range
         self.min_start.is_some() && self.max_start.is_some() &&
-        self.min_start.unwrap() <= start && start <= self.max_start.unwrap()
+        self.min_start.unwrap() <= pos && pos < self.max_start.unwrap() + self.length
     }
 }
 impl DirectionalSequence for Run {
