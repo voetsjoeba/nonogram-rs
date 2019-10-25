@@ -123,20 +123,26 @@ impl Run {
     }
 }
 impl Run {
-    pub fn complete(&mut self, at: usize) -> Result<Changes, Error> {
+    pub fn complete(&mut self, start_at: usize) -> Result<Changes, Error> {
         // found position for this run; cross out squares to the left and right of this run
         let mut changes = Vec::<Change>::new();
-        if at > 0 {
-            if let Some(change) = self.get_square_mut(at-1).set_status(CrossedOut)? {
-                changes.push(Change::from(change));
-            }
-        }
-        if at + self.length < self.row_length {
-            if let Some(change) = self.get_square_mut(at + self.length).set_status(CrossedOut)? {
-                changes.push(Change::from(change));
-            }
-        }
+        changes.extend(self.delineate_at(start_at)?);
         self.completed = true;
+        Ok(changes)
+    }
+    pub fn delineate_at(&mut self, start_at: usize) -> Result<Changes, Error> {
+        // assuming that this run will be placed at the given starting position, cross out squares directly in front and behind of it
+        let mut changes = Vec::<Change>::new();
+        if start_at > 0 {
+            if let Some(change) = self.get_square_mut(start_at-1).set_status(CrossedOut)? {
+                changes.push(Change::from(change));
+            }
+        }
+        if start_at + self.length < self.row_length {
+            if let Some(change) = self.get_square_mut(start_at + self.length).set_status(CrossedOut)? {
+                changes.push(Change::from(change));
+            }
+        }
         Ok(changes)
     }
     pub fn is_completed(&self) -> bool {

@@ -199,10 +199,11 @@ impl Row {
                                 .into_iter().collect::<Vec<_>>();
 
         // look through this row for contiguous ("attached") sequences of filled squares;
-        // for each one found, see whether it falls within any of the runs' possible range of squares
-        // (should always be at least one).
-        // because these are attached sequences, if ANY of the squares within a sequence falls within the
-        // range of only a single run, then the whole sequence must be part of that run and we can assign it.
+        // for each one found, look through all runs of at least that length, and see which ones could
+        // contain the sequence (should always be at least one).
+        //
+        // because these are attached sequences, if ANY of the squares within a sequence has only one run that
+        // can contain it, then the whole sequence must be part of that run and we can assign it.
         //
         // after assigning a run to a square, update that run's min_start and max_start positions as well,
         // since those might have tightened up now.
@@ -211,16 +212,27 @@ impl Row {
             let mut single_run: Option<usize> = None;
             for x in range.start..range.end {
                 let possible_runs: Vec<usize> = self.runs.iter()
-                                                         .filter(|r| r.might_contain_position(x))
+                                                         .filter(|r| r.might_contain_position(x) && r.length >= range.len())
                                                          .map(|r| r.index)
                                                          .collect();
                 if possible_runs.len() == 0 {
                     panic!("Inconsistency: no run found that can encompass the sequence of filled squares [{}, {}] in {} row {}", range.start, range.end-1, self.direction, self.index);
                 }
-                if possible_runs.len() == 1 {
+                else if possible_runs.len() == 1 {
                     // only one run could possibly encompass this sequence of filled squares; assign it to all of them
                     single_run = Some(possible_runs[0]);
                     break;
+                }
+                else {
+                    // ok, we couldn't identify the exact run, but we might still be able to confirm the length of the sequence:
+                    // if all the runs that could contain this sequence have the same length as the sequence already does,
+                    // then we can at least cross out the squares in front and behind it without knowing the exact run yet.
+                    if possible_runs.iter().all(|&r| self.runs[r].length == range.len()) {
+                        println!("all possible runs that might contain the sequence [{}, {}] are of the same length: {}", range.start, range.end-1, range.len());
+                        // pick any run (doesn't matter which one, they're all the same length), pretend it will be placed
+                        // at this sequence's position, and cross out the squares directly in front of and behind it.
+                        changes.extend(self.runs[possible_runs[0]].delineate_at(range.start)?);
+                    }
                 }
             }
             if let Some(idx) = single_run {
@@ -242,9 +254,6 @@ impl Row {
                         isize::try_from(range.end).unwrap() - isize::try_from(run.length).unwrap())
                 ).unwrap());
                 run.max_start = Some(min(run.max_start.unwrap(), range.start));
-
-                //println!("  infer_run_assignments: updated min_start of run {} to {}", run.index, run.min_start.unwrap());
-                //println!("  infer_run_assignments: updated max_start of run {} to {}", run.index, run.max_start.unwrap());
             }
         }
 
