@@ -145,7 +145,8 @@ impl fmt::Display for StatusError {
 
 #[derive(PartialEq, Debug)]
 pub enum RunError {
-    ChangeRejected(RunChange, String) // new run assignment conflicts with existing one
+    ChangeRejected(RunChange, String), // new run assignment conflicts with existing one
+    NotFilledIn(RunChange),            // can't assign a run to a square that's not filled in
 }
 impl fmt::Display for RunError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -156,6 +157,9 @@ impl fmt::Display for RunError {
                         Some(x) => x.to_string(),
                         None    => "None".to_string(),
                     }, change.new, msg),
+            RunError::NotFilledIn(change) =>
+                format!("In {}, cannot set {} run index to {}: square is not filled in",
+                    change.fmt_location(), change.direction, change.new),
         })
     }
 }
@@ -241,6 +245,9 @@ impl Square {
         match direction {
             Horizontal => {
                 let cand_change = RunChange::new(&self, direction, self.hrun_index, new_index);
+                if self.status != SquareStatus::FilledIn {
+                    return Err(RunError::NotFilledIn(cand_change))
+                }
                 if let Some(x) = self.hrun_index {
                     if x != new_index {
                         return Err(RunError::ChangeRejected(cand_change, "conflicting information".to_string()));
@@ -255,6 +262,9 @@ impl Square {
             },
             Vertical   => {
                 let cand_change = RunChange::new(&self, direction, self.vrun_index, new_index);
+                if self.status != SquareStatus::FilledIn {
+                    return Err(RunError::NotFilledIn(cand_change))
+                }
                 if let Some(x) = self.vrun_index {
                     if x != new_index {
                         return Err(RunError::ChangeRejected(cand_change, "conflicting information".to_string()));
