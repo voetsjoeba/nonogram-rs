@@ -110,6 +110,7 @@ impl Puzzle {
                     row.update_run_bounds();
                     changes.extend(row.fill_overlap()?);
                     changes.extend(row.infer_run_assignments()?);
+                    changes.extend(row.infer_status_assignments()?);
                 }
             }
 
@@ -149,7 +150,7 @@ impl Puzzle {
             println!("puzzle solved!");
         } else {
             println!("puzzle partially solved, out of actions.");
-            println!("run assignment overview:");
+            /*println!("run assignment overview:");
             let grid = self.grid.borrow();
             for x in 0..self.width() {
                 for y in 0..self.height() {
@@ -162,7 +163,7 @@ impl Puzzle {
                         );
                     }
                 }
-            }
+            }*/
         }
         Ok(())
     }

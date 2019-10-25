@@ -237,7 +237,7 @@ impl Row {
             }
             if let Some(idx) = single_run {
                 let run = &self.runs[idx];
-                println!("  infer_run_assignments: found singular run assignment for sequence [{}, {}]: run {} (len {})", range.start, range.end-1, run.index, run.length);
+                //println!("  infer_run_assignments: found singular run assignment for sequence [{}, {}]: run {} (len {})", range.start, range.end-1, run.index, run.length);
 
                 for i in range.start..range.end {
                     if let Some(change) = self.get_square_mut(i).assign_run(run)? {
@@ -254,6 +254,22 @@ impl Row {
                         isize::try_from(range.end).unwrap() - isize::try_from(run.length).unwrap())
                 ).unwrap());
                 run.max_start = Some(min(run.max_start.unwrap(), range.start));
+            }
+        }
+
+        Ok(changes)
+    }
+
+    pub fn infer_status_assignments(&mut self) -> Result<Changes, Error>
+    {
+        // kind of the converse of infer_run_assignments: cross out squares that don't fall within the potential range
+        // of any of the runs.
+        let mut changes = Vec::<Change>::new();
+        for x in 0..self.length {
+            if !self.runs.iter().any(|r| r.might_contain_position(x)) {
+                if let Some(change) = self.get_square_mut(x).set_status(CrossedOut)? {
+                    changes.push(Change::from(change));
+                }
             }
         }
 
