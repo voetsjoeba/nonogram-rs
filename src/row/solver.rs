@@ -8,7 +8,8 @@ use std::cell::{Ref, RefMut, RefCell};
 use std::collections::HashSet;
 use super::{Row, Field, Run, DirectionalSequence};
 use super::super::util::{Direction, Direction::*};
-use super::super::grid::{Grid, Square, SquareStatus::{CrossedOut, FilledIn}, Changes, Change, Error, HasGridLocation};
+use super::super::grid::{Grid, Square, SquareStatus::{CrossedOut, FilledIn, Unknown},
+                         Changes, Change, Error, HasGridLocation};
 
 impl Row {
     fn _ranges_of<P>(&self, pred: P) -> Vec<Range<usize>>
@@ -228,7 +229,7 @@ impl Row {
                     // if all the runs that could contain this sequence have the same length as the sequence already does,
                     // then we can at least cross out the squares in front and behind it without knowing the exact run yet.
                     if possible_runs.iter().all(|&r| self.runs[r].length == range.len()) {
-                        println!("all possible runs that might contain the sequence [{}, {}] are of the same length: {}", range.start, range.end-1, range.len());
+                        //println!("all possible runs that might contain the sequence [{}, {}] are of the same length: {}", range.start, range.end-1, range.len());
                         // pick any run (doesn't matter which one, they're all the same length), pretend it will be placed
                         // at this sequence's position, and cross out the squares directly in front of and behind it.
                         changes.extend(self.runs[possible_runs[0]].delineate_at(range.start)?);
@@ -271,6 +272,51 @@ impl Row {
                     changes.push(Change::from(change));
                 }
             }
+        }
+
+        // look at single unknown squares inbetween sequences of filled in ones; if filling them in would create
+        // a sequence that can't exist at that position, then that square has to be crossed out.
+        //
+        // Example:
+        //              0 1 2 3 4   5 6 7 8 9   A B C D E
+        //   1 2 4    [ . .     X │ . X . . . │ . X . . . ]
+        //
+        //  run  1: min_start =  0, max_start =  6
+        //  run  2: min_start =  4, max_start =  8
+        //  run  4: min_start =  8, max_start = 11
+        //
+        // In this scenario, the square at position 5 cannot be filled in, because that would create a sequence
+        // of length 3 outside of the range of any run of length >= 3.
+        let filled_ranges = self._ranges_of(|s| s.get_status() == FilledIn)
+                                .into_iter().collect::<Vec<_>>();
+        let gap_squares = (1..(self.length-1)).filter(|&x| self.get_square(x-1).get_status() == FilledIn
+                                                           && self.get_square(x).get_status() == Unknown
+                                                           && self.get_square(x+1).get_status() == FilledIn)
+                                              .collect::<Vec<_>>();
+        for gap_position in gap_squares
+        {
+            println!("  infer_status_assignments: found gap square at position {}", gap_position);
+            let filled_range_left  = filled_ranges.iter().filter(|r| r.end == gap_position).collect::<Vec<_>>()[0];
+            let filled_range_right = filled_ranges.iter().filter(|r| r.start == gap_position+1).collect::<Vec<_>>()[0];
+
+            let joined_len = filled_range_left.len() + filled_range_right.len() + 1;
+            // can a filled in sequence [filled_range_left.start, filled_range_right.end[ exist at this position?
+            // i.e., is there a run of length >= joined_len that might contain any of the squares in that range?
+            // (we don't care about which one it is, so we can simplify this to just asking the question for
+            //  the two edge squares of the joined range)
+            let possible_runs: usize = self.runs.iter()
+                                                .filter(|r| r.length >= joined_len
+                                                            && r.might_contain_position(filled_range_left.start)
+                                                            && r.might_contain_position(filled_range_right.end-1))
+                                                .count();
+            if possible_runs == 0 {
+                println!("  infer_status_assignments: no run can contain joined sequence of len {} if this square were to be filled in; crossing it out", joined_len);
+                // no runs can contain the joined sequence if we filled in this gap square, so it has to be crossed out.
+                if let Some(change) = self.get_square_mut(gap_position).set_status(CrossedOut)? {
+                    changes.push(Change::from(change));
+                }
+            }
+
         }
 
         Ok(changes)
@@ -329,7 +375,7 @@ impl Row {
         // (also handles cases where the row is empty or only has 0-length runs)
         let mut changes = Vec::<Change>::new();
         let is_trivially_empty: bool = (self.runs.is_empty() || self.runs.iter().all(|r| r.length == 0));
-        
+
         if is_trivially_empty || self.runs.iter().all(|r| r.is_completed())
         {
             for x in 0..self.length {

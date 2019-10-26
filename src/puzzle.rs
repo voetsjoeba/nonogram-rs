@@ -150,6 +150,16 @@ impl Puzzle {
             println!("puzzle solved!");
         } else {
             println!("puzzle partially solved, out of actions.");
+            println!("run min/max start ranges:");
+            for row in self.rows.iter().chain(self.cols.iter()) {
+                if row.runs.len() == 0 { continue; }
+                println!("  {:-10} row {:2}:", row.direction, row.index);
+                for run in &row.runs {
+                    println!("    run {:2}: min_start = {:2}, max_start = {:2}", run.length, run.min_start.unwrap(), run.max_start.unwrap());
+                }
+            }
+            println!("");
+
             /*println!("run assignment overview:");
             let grid = self.grid.borrow();
             for x in 0..self.width() {
