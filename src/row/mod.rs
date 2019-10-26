@@ -83,6 +83,35 @@ impl Row {
     pub fn is_trivially_empty(&self) -> bool {
         self.runs.is_empty() || self.runs.iter().all(|r| r.length == 0)
     }
+    pub fn possible_runs_for_sequence(&self, seq: &Range<usize>) -> Vec<usize>
+    {
+        // answers the question: if a sequence of filled in squares would be placed
+        // at the given position, which runs could that sequence (in its entirety) belong to?
+        // requirement on the input sequence position: must be contained entirely within a field.
+
+        // the conditions for a run to be eligible to contain the sequence are:
+        //  - the run must be at least as long as the sequence.
+        //  - the run must not be larger than the field the sequence is located in.
+        //  - ALL squares in the sequence must fall within the min/max bounds of the run.
+
+        // find the field that this sequence lives in (should always be exactly one).
+        //let seq = start..start+len;
+        let field = self.fields.iter()
+                               .filter(|field| field.contains(seq.start))
+                               .next()
+                               .expect(&format!("inconsistency: no field found that contains the sequence of filled squares [{}, {}] in {} row {}", seq.start, seq.end-1, self.direction, self.index));
+        assert!(field.contains(seq.end-1)); // by definition of a field (-1 because .end is exclusive)
+
+        self.runs.iter()
+                 .filter(|run| run.length >= seq.len()
+                               && run.length <= field.length
+                               && (seq.start..seq.end).all(|pos| run.might_contain_position(pos))) // TODO: might be simplifiable to only checking the first and last square of the sequence? not sure.
+                 .map(|run| run.index)
+                 .collect()
+    }
+    pub fn possible_runs_for_square(&self, position: usize) -> Vec<usize> {
+        self.possible_runs_for_sequence(&(position..(position+1)))
+    }
 }
 impl DirectionalSequence for Row {
     fn get_row_index(&self) -> usize { self.index }

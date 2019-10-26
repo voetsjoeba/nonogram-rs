@@ -161,7 +161,7 @@ impl Puzzle {
             }
             println!("");
 
-            /*println!("run assignment overview:");
+            println!("run assignment overview:");
             let grid = self.grid.borrow();
             for x in 0..self.width() {
                 for y in 0..self.height() {
@@ -174,7 +174,7 @@ impl Puzzle {
                         );
                     }
                 }
-            }*/
+            }
         }
         Ok(())
     }

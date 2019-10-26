@@ -200,62 +200,27 @@ impl Row {
                                    .into_iter().collect::<Vec<_>>();
 
         // look through this row for contiguous ("attached") sequences of filled squares;
-        // for each one found, look through all runs of at least that length, and see which ones could
-        // contain the sequence (should always be at least one).
-        // to determine whether a run could contain a sequence, don't just compare against the min/max start ranges,
-        // also take into account the size of the field that the sequence lives in; there might not be sufficient
-        // room left in the field to contain the run.
-        //
-        // because these are attached sequences, if ANY of the squares within a sequence has only one run that
-        // can contain it, then the whole sequence must be part of that run and we can assign it.
+        // for each one found, determine which runs that sequence could be part of:
+        //  - if there's only one possible run, then we can unambiguously assign it
+        //  - if there are multiple runs, but they're all of the same length as the sequence, then
+        //    we can confirm the length of the sequence and cross out squares in front and behind of it
         //
         // after assigning a run to a square, update that run's min_start and max_start positions as well,
         // since those might have tightened up now.
-        for seq in filled_sequences
+        for seq in filled_sequences.iter()
         {
-            // find the field that this sequence lives in (should always be exactly one).
-            let field = self.fields.iter()
-                                   .filter(|field| field.contains(seq.start))
-                                   .next()
-                                   .expect(&format!("inconsistency: no field found that contains the sequence of filled squares [{}, {}] in {} row {}", seq.start, seq.end-1, self.direction, self.index));
-            assert!(field.contains(seq.end-1)); // by definition of a field (-1 because .end is exclusive)
+            let possible_runs = self.possible_runs_for_sequence(seq);
 
-            let mut single_run: Option<usize> = None;
-            for x in seq.start..seq.end {
-                let possible_runs: Vec<usize> = self.runs.iter()
-                                                         .filter(|run| run.might_contain_position(x)
-                                                                       && run.length >= seq.len()
-                                                                       && field.length >= run.length)
-                                                         .map(|run| run.index)
-                                                         .collect();
-                //println!("  infer_run_assignments: found {} possible run assignments for sequence [{}, {}]", possible_runs.len(), seq.start, seq.end-1);
-                if possible_runs.len() == 0 {
-                    panic!("Inconsistency: no run found that can encompass the sequence of filled squares [{}, {}] in {} row {}", seq.start, seq.end-1, self.direction, self.index);
-                }
-                else if possible_runs.len() == 1 {
-                    // only one run could possibly encompass this sequence of filled squares; assign it to all of them
-                    single_run = Some(possible_runs[0]);
-                    break;
-                }
-                else {
-                    // ok, we couldn't identify the exact run, but we might still be able to confirm the length of the sequence:
-                    // if all the runs that could contain this square have the same length as the sequence already does,
-                    // then we can at least cross out the squares in front and behind it without knowing the exact run yet.
-                    if possible_runs.iter().all(|&r| self.runs[r].length == seq.len()) {
-                        //println!("all possible runs that might contain the sequence [{}, {}] are of the same length: {}", seq.start, seq.end-1, seq.len());
-                        // pick any run (doesn't matter which one, they're all the same length), pretend it will be placed
-                        // at this sequence's position, and cross out the squares directly in front of and behind it.
-                        changes.extend(self.runs[possible_runs[0]].delineate_at(seq.start)?);
-                        break;
-                    }
-                }
+            if possible_runs.len() == 0 {
+                panic!("Inconsistency: no run found that can encompass the sequence of filled squares [{}, {}] in {} row {}", seq.start, seq.end-1, self.direction, self.index);
             }
-            if let Some(idx) = single_run {
-                let run = &self.runs[idx];
+            else if possible_runs.len() == 1 {
+                // only one run could possibly encompass this sequence; assign it to each square
+                let run = &self.runs[possible_runs[0]];
                 println!("  infer_run_assignments: found singular run assignment for sequence [{}, {}]: run {} (len {})", seq.start, seq.end-1, run.index, run.length);
 
-                for i in seq.start..seq.end {
-                    if let Some(change) = self.get_square_mut(i).assign_run(run)? {
+                for x in seq.start..seq.end {
+                    if let Some(change) = self.get_square_mut(x).assign_run(run)? {
                         changes.push(Change::from(change));
                     }
                 }
@@ -263,12 +228,24 @@ impl Row {
                 // update min_start and max_start of the run given that we've now potentially found new squares assigned
                 // to it; update_run_bounds and fill_overlap will pick up these new values in the next iteration(s).
                 // (note: have to dip into signed arithmetic for a second because the second argument to max() may be negative
-                let run = &mut self.runs[idx];
+                let run = &mut self.runs[possible_runs[0]];
                 run.min_start = Some(usize::try_from(
                     max(isize::try_from(run.min_start.unwrap()).unwrap(),
                         isize::try_from(seq.end).unwrap() - isize::try_from(run.length).unwrap())
                 ).unwrap());
                 run.max_start = Some(min(run.max_start.unwrap(), seq.start));
+
+            }
+            else {
+                // ok, we couldn't identify the exact run, but we might still be able to confirm the length of the sequence:
+                // if all the runs that could contain this sequence have the same length as the sequence already does,
+                // then we can at least cross out the squares in front and behind it without knowing the exact run yet.
+                if possible_runs.iter().all(|&r| self.runs[r].length == seq.len()) {
+                    //println!("all possible runs that might contain the sequence [{}, {}] are of the same length: {}", seq.start, seq.end-1, seq.len());
+                    // pick any run (doesn't matter which one, they're all the same length), pretend it will be placed
+                    // at this sequence's position, and cross out the squares directly in front of and behind it.
+                    changes.extend(self.runs[possible_runs[0]].delineate_at(seq.start)?);
+                }
             }
         }
 
@@ -313,37 +290,19 @@ impl Row {
             println!("  infer_status_assignments: found gap square at position {}", gap_position);
             let filled_seq_left  = filled_sequences.iter().filter(|r| r.end   == gap_position).next().expect("");
             let filled_seq_right = filled_sequences.iter().filter(|r| r.start == gap_position+1).next().expect("");
-
-            // find the field that this gap square lives in (should always be exactly one, and should by definition
-            // also contain the sequences to the left and right)
-            let field = self.fields.iter()
-                                   .filter(|field| field.contains(gap_position))
-                                   .next()
-                                   .expect(&format!("inconsistency: no field found that contains the gap square at position {} in {} row {}", gap_position, self.direction, self.index));
-            assert!(field.contains(filled_seq_left.start));
-            assert!(field.contains(filled_seq_right.end-1));
-
-            let joined_len = filled_seq_left.len() + filled_seq_right.len() + 1;
+            let joined_seq = filled_seq_left.start .. filled_seq_right.end;
 
             // could a filled in sequence [filled_seq_left.start, filled_seq_right.end[ exist at this position?
             // i.e., is there a run of length >= joined_len that might contain any of the squares in that range,
             // and that could be placed in this field?
-            // (we don't care about which one it is, so we can simplify this to just asking the question for
-            //  the two edge squares of the joined range)
-            let possible_runs: usize = self.runs.iter()
-                                                .filter(|r| r.length >= joined_len
-                                                            && field.length >= joined_len
-                                                            && r.might_contain_position(filled_seq_left.start)
-                                                            && r.might_contain_position(filled_seq_right.end-1))
-                                                .count();
-            if possible_runs == 0 {
-                println!("  infer_status_assignments: no run can contain joined sequence of len {} if this square were to be filled in; crossing it out", joined_len);
+            let possible_runs = self.possible_runs_for_sequence(&joined_seq);
+            if possible_runs.len() == 0 {
+                println!("  infer_status_assignments: no run can contain joined sequence of len {} if this square were to be filled in; crossing it out", joined_seq.len());
                 // no runs can contain the joined sequence if we filled in this gap square, so it has to be crossed out.
                 if let Some(change) = self.get_square_mut(gap_position).set_status(CrossedOut)? {
                     changes.push(Change::from(change));
                 }
             }
-
         }
 
         Ok(changes)
