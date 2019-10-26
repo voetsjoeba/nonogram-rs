@@ -283,6 +283,43 @@ impl Row {
                     changes.extend(self.runs[possible_runs[0]].delineate_at(seq.start)?);
                 }
 
+                // if all possible runs are of a certain minimum length, we can 'bounce' that length
+                // against the edges of the field to find additional squares to be filled in.
+                //
+                // example:
+                //              0 1 2 3 4   5 6 7 8 9   A B C D E
+                //   1 2 2 2  [ X   . . . │ . . . . . │ .   X . . │ . . . . . ]
+                //
+                // in this scenario, the square at position D can be marked as filled in, because all possible
+                // runs that can contain it are of size >= 2.
+                let min_length = possible_runs.iter().map(|&r| self.runs[r].length).min().unwrap();
+                if min_length > seq.len() {
+                    println!("  infer_run_assignments: all possible runs for sequence [{}, {}] are of length at least {}; marking additional squares away from field edges as filled in (where applicable)", seq.start, seq.end-1, min_length);
+                }
+                let field = self.fields.iter()
+                                       .filter(|field| field.contains(seq.start))
+                                       .next()
+                                       .expect(""); // TODO: code duplication from possible_runs_for_sequence
+
+                let clamped_leftmost_start = max(seq.start - min_length + 1, field.range().start);
+                let clamped_rightmost_end  = min(seq.start + min_length,     field.range().end);
+
+                let clamped_leftmost_range = clamped_leftmost_start .. (clamped_leftmost_start + min_length);
+                let clamped_rightmost_range = (clamped_rightmost_end - min_length) .. clamped_rightmost_end;
+
+                // fill in from seq.start to clamped_leftmost_range.end
+                //              clamped_rightmost_range.start to seq.end
+                for x in seq.start .. clamped_leftmost_range.end {
+                    if let Some(change) = self.get_square_mut(x).set_status(FilledIn)? {
+                        changes.push(Change::from(change));
+                    }
+                }
+                for x in clamped_rightmost_range.start .. seq.end {
+                    if let Some(change) = self.get_square_mut(x).set_status(FilledIn)? {
+                        changes.push(Change::from(change));
+                    }
+                }
+
             }
         }
 
