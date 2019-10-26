@@ -7,7 +7,7 @@ use std::rc::{Rc, Weak};
 use std::cell::{Ref, RefMut, RefCell};
 use std::collections::HashSet;
 use super::{Row, Field, Run, DirectionalSequence};
-use super::super::util::{Direction, Direction::*};
+use super::super::util::{Direction, Direction::*, vec_remove_item};
 use super::super::grid::{Grid, Square, SquareStatus::{CrossedOut, FilledIn, Unknown},
                          Changes, Change, Error, HasGridLocation};
 
@@ -207,9 +207,44 @@ impl Row {
         //
         // after assigning a run to a square, update that run's min_start and max_start positions as well,
         // since those might have tightened up now.
-        for seq in filled_sequences.iter()
+        for seq_idx in 0..filled_sequences.len()
         {
-            let possible_runs = self.possible_runs_for_sequence(seq);
+            let seq = &filled_sequences[seq_idx];
+            let mut possible_runs = self.possible_runs_for_sequence(seq);
+
+            // if this is not the first filled sequence (i.e. there are one or more others to our left in the same field),
+            // then we can exclude the possibility of the first run in the row if joining up to the
+            // leftmost sequence would exceed the length of the run.
+            // (and analogously for the last run).
+
+            // Motivating example:
+            //              0 1 2 3 4   5 6 7 8 9   A B C D E
+            //     3 9    [   . . . . │ X . . X . │ . X X X . │ . . . . . ]
+            //
+            //  run  3: min_start =  1, max_start =  7                                 
+            //  run  9: min_start =  5, max_start = 11
+            //
+            // In this scenario, the sequence [8,8] cannot be assigned to run 3, because that's the first run of the row,
+            // and it would hence necessarily have to join up to the filled square further to its left, but that
+            // would create a sequence of length 4. The only remaining option is therefore run 9.
+            if seq_idx > 0 {
+                let joined_to_first_seq = filled_sequences[0].start .. seq.end;
+                if joined_to_first_seq.len() > self.runs[0].length {
+                    if let Some(_) = vec_remove_item(&mut possible_runs, &0usize) {
+                        println!("  infer_run_assignments: removing the possibility of run {} (length {}) for the sequence [{}, {}]: would require joining up with the earlier sequence [{}, {}] for a resulting size of {}, exceeding the run's length",
+                            0, self.runs[0].length, seq.start, seq.end-1, filled_sequences[0].start, filled_sequences[0].end-1, joined_to_first_seq.len());
+                    }
+                }
+            }
+            if seq_idx < filled_sequences.len()-1 {
+                let joined_to_last_seq = seq.start .. filled_sequences[filled_sequences.len()-1].end;
+                if joined_to_last_seq.len() > self.runs[self.runs.len()-1].length {
+                    if let Some(_) = vec_remove_item(&mut possible_runs, &(self.runs.len()-1)) {
+                        println!("  infer_run_assignments: removing the possibility of run {} (length {}) for the sequence [{}, {}]: would require joining up with the later sequence [{}, {}] for a resulting size of {}, exceeding the run's length",
+                            self.runs.len()-1, self.runs[self.runs.len()-1].length, seq.start, seq.end-1, filled_sequences[filled_sequences.len()-1].start, filled_sequences[filled_sequences.len()-1].end-1, joined_to_last_seq.len());
+                    }
+                }
+            }
 
             if possible_runs.len() == 0 {
                 panic!("Inconsistency: no run found that can encompass the sequence of filled squares [{}, {}] in {} row {}", seq.start, seq.end-1, self.direction, self.index);
@@ -234,18 +269,20 @@ impl Row {
                         isize::try_from(seq.end).unwrap() - isize::try_from(run.length).unwrap())
                 ).unwrap());
                 run.max_start = Some(min(run.max_start.unwrap(), seq.start));
-
             }
             else {
-                // ok, we couldn't identify the exact run, but we might still be able to confirm the length of the sequence:
-                // if all the runs that could contain this sequence have the same length as the sequence already does,
-                // then we can at least cross out the squares in front and behind it without knowing the exact run yet.
+                // ok, we couldn't identify an exact run; see if there's anything else we can determine with the
+                // information we have.
+
+                // if all possible runs for this sequence are of the same length that the sequence already has,
+                // then we can at least confirm its placement despite not knowing exactly which one it is yet.
                 if possible_runs.iter().all(|&r| self.runs[r].length == seq.len()) {
                     //println!("all possible runs that might contain the sequence [{}, {}] are of the same length: {}", seq.start, seq.end-1, seq.len());
                     // pick any run (doesn't matter which one, they're all the same length), pretend it will be placed
                     // at this sequence's position, and cross out the squares directly in front of and behind it.
                     changes.extend(self.runs[possible_runs[0]].delineate_at(seq.start)?);
                 }
+
             }
         }
 
