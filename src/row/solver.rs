@@ -401,7 +401,7 @@ impl Row {
         // if all runs in this row have been completed, clear out any remaining squares
         // (also handles cases where the row is empty or only has 0-length runs)
         let mut changes = Vec::<Change>::new();
-        let is_trivially_empty: bool = (self.runs.is_empty() || self.runs.iter().all(|r| r.length == 0));
+        let is_trivially_empty: bool = self.is_trivially_empty();
 
         if is_trivially_empty || self.runs.iter().all(|r| r.is_completed())
         {

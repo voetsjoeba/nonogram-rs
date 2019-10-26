@@ -152,10 +152,11 @@ impl Puzzle {
             println!("puzzle partially solved, out of actions.");
             println!("run min/max start ranges:");
             for row in self.rows.iter().chain(self.cols.iter()) {
-                if row.runs.len() == 0 { continue; }
+                if row.is_trivially_empty() { continue; }
                 println!("  {:-10} row {:2}:", row.direction, row.index);
                 for run in &row.runs {
-                    println!("    run {:2}: min_start = {:2}, max_start = {:2}", run.length, run.min_start.unwrap(), run.max_start.unwrap());
+                    println!("    run {:2}: min_start = {:2}, max_start = {:2}",
+                        run.length, run.min_start.unwrap(), run.max_start.unwrap());
                 }
             }
             println!("");

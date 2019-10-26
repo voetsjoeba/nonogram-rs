@@ -80,6 +80,9 @@ impl Row {
     pub fn is_completed(&self) -> bool {
         self.completed
     }
+    pub fn is_trivially_empty(&self) -> bool {
+        self.runs.is_empty() || self.runs.iter().all(|r| r.length == 0)
+    }
 }
 impl DirectionalSequence for Row {
     fn get_row_index(&self) -> usize { self.index }
