@@ -196,28 +196,41 @@ impl Row {
     pub fn infer_run_assignments(&mut self) -> Result<Changes, Error>
     {
         let mut changes = Vec::<Change>::new();
-        let filled_ranges = self._ranges_of(|s| s.get_status() == FilledIn)
-                                .into_iter().collect::<Vec<_>>();
+        let filled_sequences = self._ranges_of(|s| s.get_status() == FilledIn)
+                                   .into_iter().collect::<Vec<_>>();
 
         // look through this row for contiguous ("attached") sequences of filled squares;
         // for each one found, look through all runs of at least that length, and see which ones could
         // contain the sequence (should always be at least one).
+        // to determine whether a run could contain a sequence, don't just compare against the min/max start ranges,
+        // also take into account the size of the field that the sequence lives in; there might not be sufficient
+        // room left in the field to contain the run.
         //
         // because these are attached sequences, if ANY of the squares within a sequence has only one run that
         // can contain it, then the whole sequence must be part of that run and we can assign it.
         //
         // after assigning a run to a square, update that run's min_start and max_start positions as well,
         // since those might have tightened up now.
-        for range in filled_ranges
+        for seq in filled_sequences
         {
+            // find the field that this sequence lives in (should always be exactly one).
+            let field = self.fields.iter()
+                                   .filter(|field| field.contains(seq.start))
+                                   .next()
+                                   .expect(&format!("inconsistency: no field found that contains the sequence of filled squares [{}, {}] in {} row {}", seq.start, seq.end-1, self.direction, self.index));
+            assert!(field.contains(seq.end-1)); // by definition of a field (-1 because .end is exclusive)
+
             let mut single_run: Option<usize> = None;
-            for x in range.start..range.end {
+            for x in seq.start..seq.end {
                 let possible_runs: Vec<usize> = self.runs.iter()
-                                                         .filter(|r| r.might_contain_position(x) && r.length >= range.len())
-                                                         .map(|r| r.index)
+                                                         .filter(|run| run.might_contain_position(x)
+                                                                       && run.length >= seq.len()
+                                                                       && field.length >= run.length)
+                                                         .map(|run| run.index)
                                                          .collect();
+                //println!("  infer_run_assignments: found {} possible run assignments for sequence [{}, {}]", possible_runs.len(), seq.start, seq.end-1);
                 if possible_runs.len() == 0 {
-                    panic!("Inconsistency: no run found that can encompass the sequence of filled squares [{}, {}] in {} row {}", range.start, range.end-1, self.direction, self.index);
+                    panic!("Inconsistency: no run found that can encompass the sequence of filled squares [{}, {}] in {} row {}", seq.start, seq.end-1, self.direction, self.index);
                 }
                 else if possible_runs.len() == 1 {
                     // only one run could possibly encompass this sequence of filled squares; assign it to all of them
@@ -228,19 +241,20 @@ impl Row {
                     // ok, we couldn't identify the exact run, but we might still be able to confirm the length of the sequence:
                     // if all the runs that could contain this sequence have the same length as the sequence already does,
                     // then we can at least cross out the squares in front and behind it without knowing the exact run yet.
-                    if possible_runs.iter().all(|&r| self.runs[r].length == range.len()) {
-                        //println!("all possible runs that might contain the sequence [{}, {}] are of the same length: {}", range.start, range.end-1, range.len());
+                    if possible_runs.iter().all(|&r| self.runs[r].length == seq.len()) {
+                        //println!("all possible runs that might contain the sequence [{}, {}] are of the same length: {}", seq.start, seq.end-1, seq.len());
                         // pick any run (doesn't matter which one, they're all the same length), pretend it will be placed
                         // at this sequence's position, and cross out the squares directly in front of and behind it.
-                        changes.extend(self.runs[possible_runs[0]].delineate_at(range.start)?);
+                        changes.extend(self.runs[possible_runs[0]].delineate_at(seq.start)?);
+                        break;
                     }
                 }
             }
             if let Some(idx) = single_run {
                 let run = &self.runs[idx];
-                //println!("  infer_run_assignments: found singular run assignment for sequence [{}, {}]: run {} (len {})", range.start, range.end-1, run.index, run.length);
+                println!("  infer_run_assignments: found singular run assignment for sequence [{}, {}]: run {} (len {})", seq.start, seq.end-1, run.index, run.length);
 
-                for i in range.start..range.end {
+                for i in seq.start..seq.end {
                     if let Some(change) = self.get_square_mut(i).assign_run(run)? {
                         changes.push(Change::from(change));
                     }
@@ -252,9 +266,9 @@ impl Row {
                 let run = &mut self.runs[idx];
                 run.min_start = Some(usize::try_from(
                     max(isize::try_from(run.min_start.unwrap()).unwrap(),
-                        isize::try_from(range.end).unwrap() - isize::try_from(run.length).unwrap())
+                        isize::try_from(seq.end).unwrap() - isize::try_from(run.length).unwrap())
                 ).unwrap());
-                run.max_start = Some(min(run.max_start.unwrap(), range.start));
+                run.max_start = Some(min(run.max_start.unwrap(), seq.start));
             }
         }
 

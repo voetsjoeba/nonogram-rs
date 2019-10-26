@@ -197,6 +197,9 @@ impl Field {
             grid: Rc::clone(grid),
         }
     }
+    pub fn contains(&self, position: usize) -> bool {
+        self.range().contains(&position)
+    }
     pub fn range(&self) -> Range<usize> {
         self.offset..self.offset+self.length
     }
