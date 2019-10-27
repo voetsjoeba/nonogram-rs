@@ -4,6 +4,12 @@ use std::io;
 use std::os::unix::io::AsRawFd;
 use ansi_term::ANSIString;
 
+pub fn stdout_color(s: &ANSIString) -> String {
+    match is_a_tty(io::stdout()) {
+        true  => s.to_string(),
+        false => (**s).to_string(), // deref once to get ANSIString, once more to get underlying str
+    }
+}
 pub fn ralign(s: &str, width: usize) -> String {
     if s.len() >= width {
         return String::from(s);
@@ -15,12 +21,9 @@ pub fn lalign_colored(s: &ANSIString, width: usize)
 {
     let visual_len = s.len(); // ANSIString.len() returns length WITHOUT escape sequences
     if visual_len >= width {
-        return s.to_string() // returns string WITH escape sequences
+        return stdout_color(s);
     }
-    format!("{}{}", match is_a_tty(io::stdout()) {
-        true  => s.to_string(),
-        false => (**s).to_string(), // deref once to get ANSIString, once more to get underlying str
-    }, " ".repeat(width-visual_len))
+    format!("{}{}", stdout_color(s), " ".repeat(width-visual_len))
 }
 pub fn ralign_joined_coloreds(strs: &Vec<ANSIString>, width: usize)
     -> String
@@ -29,10 +32,7 @@ pub fn ralign_joined_coloreds(strs: &Vec<ANSIString>, width: usize)
     visual_len += strs.len()-1; // count the spaces that .join(" ") will add
 
     let joined_colored = strs.iter()
-                             .map(|astr| match is_a_tty(io::stdout()) {
-                                true  => astr.to_string(),
-                                false => (**astr).to_string(), // deref once to get ANSIString, once more to get underlying str
-                              })
+                             .map(|astr| stdout_color(astr))
                              .collect::<Vec<_>>()
                              .join(" ");
     if visual_len >= width {
