@@ -10,7 +10,7 @@ use ansi_term::ANSIString;
 
 use super::grid::{Grid, Square, SquareStatus, Change, Changes, Error, HasGridLocation};
 use super::util::{ralign, lalign_colored, ralign_joined_coloreds, Direction, Direction::*, is_a_tty};
-use super::row::{Row, Run, Field};
+use super::row::{Row, Run};
 
 #[derive(Debug)]
 pub struct Puzzle {
@@ -106,9 +106,7 @@ impl Puzzle {
                 changes.extend(row.check_completed()?);
 
                 if !row.is_completed() {
-                    row.recalculate_fields();
-                    row.update_run_bounds();
-                    changes.extend(row.fill_overlap()?);
+                    row.update_possible_run_placements();
                     changes.extend(row.infer_run_assignments()?);
                     changes.extend(row.infer_status_assignments()?);
                 }
@@ -140,6 +138,7 @@ impl Puzzle {
                 println!("\n{}", self);
                 println!("--------------------------------------");
             }
+            println!("");
 
         }
 
@@ -150,16 +149,18 @@ impl Puzzle {
             println!("puzzle solved!");
         } else {
             println!("puzzle partially solved, out of actions.");
-            println!("run min/max start ranges:");
+            println!("run possible placements:");
             for row in self.rows.iter().chain(self.cols.iter()) {
                 if row.is_trivially_empty() { continue; }
                 println!("  {:-10} row {:2}:", row.direction, row.index);
                 for run in &row.runs {
-                    println!("    run {:2}: min_start = {:2}, max_start = {:2}",
-                        run.length, run.min_start.unwrap(), run.max_start.unwrap());
+                    println!("    run {:2} (len {}): {}", run.index, run.length,
+                        run.possible_placements.iter()
+                                               .map(|range| format!("[{},{}]", range.start, range.end-1))
+                                               .collect::<Vec<_>>()
+                                               .join(", "));
                 }
             }
-            println!("");
 
             println!("run assignment overview:");
             let grid = self.grid.borrow();

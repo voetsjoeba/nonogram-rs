@@ -6,172 +6,179 @@ use std::cmp::{min, max};
 use std::rc::{Rc, Weak};
 use std::cell::{Ref, RefMut, RefCell};
 use std::collections::HashSet;
-use super::{Row, Field, Run, DirectionalSequence};
+use super::{Row, Run, DirectionalSequence};
 use super::super::util::{Direction, Direction::*, vec_remove_item};
 use super::super::grid::{Grid, Square, SquareStatus::{CrossedOut, FilledIn, Unknown},
                          Changes, Change, Error, HasGridLocation};
 
 impl Row {
-    fn _ranges_of<P>(&self, pred: P) -> Vec<Range<usize>>
-        where P: Fn(Ref<Square>) -> bool
+
+    pub fn update_possible_run_placements(&mut self)
     {
-        let mut result = Vec::<Range<usize>>::new();
-        let mut x: usize = 0;
-        while x < self.length {
-            // skip past squares for which the predicate does not hold
-            while x < self.length && !pred(self.get_square(x)) {
-                x += 1;
-            }
-            if x >= self.length { break; }
+        // for each run in this row, calculates the possible placements of the run within the row,
+        // taking the current state of the row into account (i.e. crossed out squares, filled in squares, etc).
 
-            // skip past squares for which the predicate does hold
-            let range_start = x;
-            x += 1; // we already tested the predicate on x at the end of the previous loop
-            while x < self.length && pred(self.get_square(x)) {
-                x += 1;
-            }
-            let range_end = x;
-            result.push(range_start..range_end);
+        // a run of length L can be placed at position S, creating a range we'll denote as S..E,
+        // if and only if:
+        // - none of the squares in the range S..E are crossed out
+        // - none of the squares in the range S..E are already marked as belonging to another run
+        // - the range S..E is not directly adjacent to any square that is filled in
+        // - the starting position S is no smaller than the previous run's earliest ending position + 1 (or 0 if there is no previous run)
+        // - the ending position E is no bigger than the next run's latest starting position - 1 (or row length if there is no next run)
+        // - if this is the first run, there cannot be any filled in squares to our left that we don't contain
+        //   (and analogously for the last run).
 
-            x += 1;
-        }
-        result
-    }
 
-    pub fn recalculate_fields(&mut self)
-    {
-        self.fields = self._ranges_of(|s| s.get_status() != CrossedOut)
-                          .into_iter()
-                          .map(|range| self.make_field(range.start, range.end-range.start))
-                          .collect();
-    }
+        // the valid positions of a run depend on those of the runs that come before AND after it, but we can
+        // only iterate on direction at a time.
+        // so we'll work in two stages:
+        //  1) L -> R scan, determining the possible run placements looking only at those of the runs before it
+        //  2) R -> L scan, dropping possible run placements that:
+        //       * infringe on the requirement of having to end to end before the following run's latest starting position - 1.
+        //       * infringe on the requirement of having to contain ALL squares assigned to this run in the row.
 
-    pub fn update_run_bounds(&mut self)
-    {
-        // update the min_start and max_start bounds of each run, given the current set of
-        // fields in the row.
-        // NOTE: each run might already have an existing min_start and max_value value from previous
-        // solver iterations; we should only further refine them, not reset them.
-        assert!(self.fields.len() > 0, "No fields exist in this row!");
-
-        // L -> R scan: for each run in sequence, find the first field that can contain it
-        let mut current_field: usize = 0;
-        let mut candidate_position: usize = 0;
-        for run in &mut self.runs
+        // 1) L -> R scan
+        //println!("  update_possible_run_placements: L -> R scan");
+        for run_idx in 0..self.runs.len()
         {
-            // start off from previously set min_start, if any
-            if let Some(existing_min_start) = run.min_start {
-                candidate_position = max(candidate_position, existing_min_start);
+            let run = &self.runs[run_idx];
+            let len = run.length;
+
+            if run.is_completed() {
+                // nothing to do
+                assert!(run.possible_placements.len() == 1);
+                continue;
             }
-            while current_field < self.fields.len() {
-                let field: &Field = &self.fields[current_field];
-                // we started evaluating a new field; skip ahead to the start of this field if necessary
-                candidate_position = max(candidate_position, field.offset);
-                let shift = candidate_position - field.offset; // are we at a relative offset within this field?
-                if ! field.run_lfits_at(run, shift) {
-                    // not enough space (or space left) in this field, move on to the next one
-                    current_field += 1;
-                    continue;
+            //println!("    evaluating run #{} (len {})", run_idx, len);
+
+            let mut possible_placements = Vec::<Range<usize>>::new();
+
+            // what is the previous run's earliest ending position (if there is such a run)?
+            let mut prev_run_earliest_end: isize = -1;
+            if run_idx > 0 {
+                let prev_run = &self.runs[run_idx-1];
+                prev_run_earliest_end = prev_run.possible_placements[0].end.try_into().unwrap(); // [0] should always exist, was computed in one of the previous iterations
+            }
+
+            let assigned_squares = (0..self.length).filter(|&pos| self.get_square(pos).has_run_assigned(run))
+                                                   .collect::<Vec<_>>();
+            let filled_squares = (0..self.length).filter(|&pos| self.get_square(pos).get_status() == FilledIn)
+                                                 .collect::<Vec<_>>();
+
+            let scan_start: usize = usize::try_from(prev_run_earliest_end + 1).unwrap();
+            let scan_end: usize = self.length - len + 1;
+            //println!("      prev_run_earliest_end = {}, scan_start = {}, scan_end = {}", prev_run_earliest_end, scan_start, scan_end);
+
+            #[allow(unused_parens)]
+            for s in scan_start .. scan_end
+            {
+                let range = (s .. s+len);
+                let any_crossed_out      = range.clone().any(|pos| self.get_square(pos).get_status() == CrossedOut);
+                let any_belongs_to_other = range.clone().any(|pos| match self.get_square(pos).get_run_index(self.direction) {
+                                                                      Some(x) => x != run_idx,
+                                                                      None    => false,
+                                                                   });
+                let mut any_adj_sq_filled_in = false;
+                if range.start > 0 {
+                    any_adj_sq_filled_in = any_adj_sq_filled_in || self.get_square(range.start-1).get_status() == FilledIn;
+                }
+                if range.end < self.length { // range.end is exclusive, so following square is at exactly range.end
+                    any_adj_sq_filled_in = any_adj_sq_filled_in || self.get_square(range.end).get_status() == FilledIn;
                 }
 
-                // field has enough space to contain the run; place this run and start evaluating the next
-                // one, but stay in this field (it may still have space left to contain the next run)
-                run.min_start = Some(candidate_position);
-                candidate_position += run.length + 1;
+                let contains_first_assigned = match assigned_squares.first() {
+                    Some(pos) => range.contains(pos),
+                    None      => true,
+                };
+                let contains_last_assigned = match assigned_squares.last() {
+                    Some(pos) => range.contains(pos),
+                    None      => true,
+                };
+                // if this is the first run, we can't be positioned beyond the first filled square (if any).
+                let beyond_first_filled = run_idx == 0 && match filled_squares.first() {
+                    Some(&pos) => range.start > pos,
+                    None       => false,
+                };
+                // analogously for the last run and the last filled square (if any)
+                let beyond_last_filled = run_idx == self.runs.len()-1 && match filled_squares.last() {
+                    Some(&pos) => range.end <= pos,
+                    None       => false,
+                };
 
-                break;
-            }
-
-            if current_field >= self.fields.len() {
-                // no position found for this run, so we can stop here because
-                // we also won't found positions for any runs after this one
-                break;
-                //panic!("");
-            }
-        }
-
-        // R -> L scan: for each run in sequence, find the last field that can contain it
-        let mut current_field: isize = (self.fields.len() - 1).try_into().unwrap();
-        let mut candidate_end_position: isize = (self.length).try_into().unwrap(); // exclusive!
-
-        for run in self.runs.iter_mut().rev()
-        {
-            // start off from previously set max_start, if any
-            if let Some(existing_max_start) = run.max_start {
-                candidate_end_position = min(candidate_end_position,
-                                             isize::try_from(existing_max_start).unwrap() + isize::try_from(run.length).unwrap());
-            }
-            while current_field >= 0 {
-                let field: &Field = &self.fields[usize::try_from(current_field).unwrap()];
-                let field_end: isize = (field.offset+field.length).try_into().unwrap(); // exclusive
-
-                candidate_end_position = min(candidate_end_position, field_end);
-                let rshift = field_end - candidate_end_position;
-
-                if ! field.run_rfits_at(run, rshift.try_into().unwrap()) {
-                    // not enough space (or space left) in this field, try the next one
-                    current_field -= 1;
-                    continue
+                if    !any_crossed_out
+                   && !any_belongs_to_other
+                   && !any_adj_sq_filled_in
+                   && contains_first_assigned
+                   && contains_last_assigned
+                   && !beyond_first_filled
+                   && !beyond_last_filled
+                {
+                    // possible placement, add it
+                    possible_placements.push(range);
                 }
+            }
 
-                // field has enough space to contain the run; place this run and start evaluating the next
-                // one, but stay in this field (it may still have space left to contain the next one)
-                run.max_start = Some(usize::try_from(candidate_end_position).unwrap() - run.length);
-                candidate_end_position -= isize::try_from(run.length+1).unwrap();
-                break;
-            }
-            if current_field < 0 {
-                // no position found for this run, so we can stop here because
-                // we also won't found positions for any runs after this one
-                break;
-                //panic!("");
-            }
+            //println!("      possible placements (ignoring next runs): {}", possible_placements.iter()
+            //                                                                                  .map(|range| format!("[{},{}]", range.start, range.end-1))
+            //                                                                                  .collect::<Vec<_>>()
+            //                                                                                  .join(", "));
+            let run: &mut Run = &mut self.runs[run_idx];
+            run.possible_placements = possible_placements;
         }
 
-        // check if all runs received a possible placement
-        for (i, run) in self.runs.iter().enumerate() {
-            assert!(run.max_start >= run.min_start);
-            if let None = run.min_start {
-                // no possible placement found for this run
-                panic!("No leftmost placement found for {} run #{} of length {} in {} {}",
-                       self.direction,
-                       i+1,
-                       run.length,
-                       match self.direction {
-                           Horizontal => "row",
-                           Vertical   => "col",
-                       },
-                       self.index);
+        // 2) R -> L scan
+        //println!("");
+        //println!("  update_possible_run_placements: R -> L scan");
+        for run_idx in (0..(self.runs.len()-1)).rev() {
+            //println!("    evaluating run #{} (len {})", run_idx, len);
+            let run = &self.runs[run_idx];
+            if run.is_completed() {
+                continue; // nothing to do
             }
-            if let None = run.max_start {
-                // no possible placement found for this run
-                panic!("No rightmost placement found for {} run #{} of length {} in {} {}",
+
+            let next_run = &self.runs[run_idx+1];
+            let next_run_latest_start: usize = next_run.possible_placements.last().unwrap().start.try_into().unwrap();
+            //println!("      next_run_latest_start (run #{}, {}) = {}", next_run.index, next_run.length, next_run_latest_start);
+
+            // drop placements that don't respect the condition that this run's end position
+            // must be no greater than the next one's latest start position - 1
+            let run = &mut self.runs[run_idx];
+            run.possible_placements.retain(|range| range.end <= next_run_latest_start-1);
+
+            //println!("      corrected ranges: {}", run.possible_placements.iter()
+            //                                                              .map(|range| format!("[{},{}]", range.start, range.end-1))
+            //                                                              .collect::<Vec<_>>()
+            //                                                              .join(", "));
+
+        }
+
+
+        // make sure all runs received at least one possible placement, otherwise something's wrong
+        for run in &self.runs {
+            if run.possible_placements.len() == 0 {
+                panic!("Inconsistency: no possible placements found for {} run #{} of length {} in {} row {}",
                        self.direction,
-                       i+1,
+                       run.index,
                        run.length,
-                       match self.direction {
-                           Horizontal => "row",
-                           Vertical   => "col",
-                       },
+                       self.direction,
                        self.index);
             }
         }
     }
-    pub fn fill_overlap(&mut self) -> Result<Changes, Error>
+
+    pub fn infer_status_assignments(&mut self) -> Result<Changes, Error>
     {
+        // look at the possible placements of each run:
+        // - if there are squares that are part of all of them, then those must necessarily be filled in and assigned to that run.
+        // - if there's only one possible placement, then we can place it at that position and mark the run as completed
         let mut changes = Vec::<Change>::new();
         for run in &mut self.runs
         {
-            let max_start = run.max_start.unwrap();
-            let min_start = run.min_start.unwrap();
-            let diff = max_start - min_start;
-
-            if diff < run.length {
-                // found overlap
-                let overlap_start = max_start;
-                let overlap_len   = run.length - diff;
-                for i in 0..overlap_len {
-                    let mut square: RefMut<Square> = run.get_square_mut(overlap_start+i);
+            if run.is_completed() { continue; } // nothing to do
+            for pos in 0..self.length {
+                let mut square: RefMut<Square> = run.get_square_mut(pos);
+                if run.possible_placements.iter().all(|range| range.contains(&pos))
+                {
                     if let Some(change) = square.set_status(FilledIn)? {
                         changes.push(Change::from(change));
                     }
@@ -179,20 +186,37 @@ impl Row {
                         changes.push(Change::from(change));
                     }
                 }
-                if diff == 0 {
-                    changes.extend(run.complete(overlap_start)?);
+            }
+
+            if run.possible_placements.len() == 1 {
+                let range = run.possible_placements[0].clone(); // clone to avoid immutable borrow through mut ref
+                changes.extend(run.complete(range.start)?);
+            }
+        }
+
+		// conversely, look at all the squares in this row:
+        // - if there are squares that aren't part of any run, then those must necessarily be crossed out
+        for pos in 0..self.length {
+            let part_of_any_run = self.runs.iter()
+                                           .any(|run| run.possible_placements.iter()
+                                                                             .any(|range| range.contains(&pos)));
+            if !part_of_any_run {
+                if let Some(change) = self.get_square_mut(pos).set_status(CrossedOut)? {
+                    changes.push(Change::from(change));
                 }
             }
         }
-        /*if changes.len() > 0 {
-            println!("fill_overlap completed successfully; changes are:");
-            for c in changes.iter() {
-                println!("  {}", c);
-            }
-        }*/
+
+        //if changes.len() > 0 {
+        //    println!("fill_overlap completed successfully; changes are:");
+        //    for c in changes.iter() {
+        //        println!("  {}", c);
+        //    }
+        //}
 
         Ok(changes)
     }
+
     pub fn infer_run_assignments(&mut self) -> Result<Changes, Error>
     {
         let mut changes = Vec::<Change>::new();
@@ -205,46 +229,12 @@ impl Row {
         //  - if there are multiple runs, but they're all of the same length as the sequence, then
         //    we can confirm the length of the sequence and cross out squares in front and behind of it
         //
-        // after assigning a run to a square, update that run's min_start and max_start positions as well,
+        // after assigning a run to a square, update that run's set of possible placements as well,
         // since those might have tightened up now.
         for seq_idx in 0..filled_sequences.len()
         {
             let seq = &filled_sequences[seq_idx];
-            let mut possible_runs = self.possible_runs_for_sequence(seq);
-
-            // if this is not the first filled sequence (i.e. there are one or more others to our left in the same field),
-            // then we can exclude the possibility of the first run in the row if joining up to the
-            // leftmost sequence would exceed the length of the run.
-            // (and analogously for the last run).
-
-            // Motivating example:
-            //              0 1 2 3 4   5 6 7 8 9   A B C D E
-            //     3 9    [   . . . . │ X . . X . │ . X X X . │ . . . . . ]
-            //
-            //  run  3: min_start =  1, max_start =  7                                 
-            //  run  9: min_start =  5, max_start = 11
-            //
-            // In this scenario, the sequence [8,8] cannot be assigned to run 3, because that's the first run of the row,
-            // and it would hence necessarily have to join up to the filled square further to its left, but that
-            // would create a sequence of length 4. The only remaining option is therefore run 9.
-            if seq_idx > 0 {
-                let joined_to_first_seq = filled_sequences[0].start .. seq.end;
-                if joined_to_first_seq.len() > self.runs[0].length {
-                    if let Some(_) = vec_remove_item(&mut possible_runs, &0usize) {
-                        println!("  infer_run_assignments: removing the possibility of run {} (length {}) for the sequence [{}, {}]: would require joining up with the earlier sequence [{}, {}] for a resulting size of {}, exceeding the run's length",
-                            0, self.runs[0].length, seq.start, seq.end-1, filled_sequences[0].start, filled_sequences[0].end-1, joined_to_first_seq.len());
-                    }
-                }
-            }
-            if seq_idx < filled_sequences.len()-1 {
-                let joined_to_last_seq = seq.start .. filled_sequences[filled_sequences.len()-1].end;
-                if joined_to_last_seq.len() > self.runs[self.runs.len()-1].length {
-                    if let Some(_) = vec_remove_item(&mut possible_runs, &(self.runs.len()-1)) {
-                        println!("  infer_run_assignments: removing the possibility of run {} (length {}) for the sequence [{}, {}]: would require joining up with the later sequence [{}, {}] for a resulting size of {}, exceeding the run's length",
-                            self.runs.len()-1, self.runs[self.runs.len()-1].length, seq.start, seq.end-1, filled_sequences[filled_sequences.len()-1].start, filled_sequences[filled_sequences.len()-1].end-1, joined_to_last_seq.len());
-                    }
-                }
-            }
+            let possible_runs = self.possible_runs_for_sequence(seq);
 
             if possible_runs.len() == 0 {
                 panic!("Inconsistency: no run found that can encompass the sequence of filled squares [{}, {}] in {} row {}", seq.start, seq.end-1, self.direction, self.index);
@@ -252,23 +242,16 @@ impl Row {
             else if possible_runs.len() == 1 {
                 // only one run could possibly encompass this sequence; assign it to each square
                 let run = &self.runs[possible_runs[0]];
-                println!("  infer_run_assignments: found singular run assignment for sequence [{}, {}]: run {} (len {})", seq.start, seq.end-1, run.index, run.length);
 
                 for x in seq.start..seq.end {
                     if let Some(change) = self.get_square_mut(x).assign_run(run)? {
+                        println!("  infer_run_assignments: found singular run assignment for sequence [{}, {}]: run {} (len {})", seq.start, seq.end-1, run.index, run.length);
                         changes.push(Change::from(change));
                     }
                 }
 
-                // update min_start and max_start of the run given that we've now potentially found new squares assigned
-                // to it; update_run_bounds and fill_overlap will pick up these new values in the next iteration(s).
-                // (note: have to dip into signed arithmetic for a second because the second argument to max() may be negative
-                let run = &mut self.runs[possible_runs[0]];
-                run.min_start = Some(usize::try_from(
-                    max(isize::try_from(run.min_start.unwrap()).unwrap(),
-                        isize::try_from(seq.end).unwrap() - isize::try_from(run.length).unwrap())
-                ).unwrap());
-                run.max_start = Some(min(run.max_start.unwrap(), seq.start));
+                // on the next iteration, update_possible_run_placements will pick up on the fact that this square
+                // got a run assigned to it, and update its possible placements accordingly.
             }
             else {
                 // ok, we couldn't identify an exact run; see if there's anything else we can determine with the
@@ -284,7 +267,7 @@ impl Row {
                 }
 
                 // if all possible runs are of a certain minimum length, we can 'bounce' that length
-                // against the edges of the field to find additional squares to be filled in.
+                // against the edges of the containing field to find additional squares to be filled in.
                 //
                 // example:
                 //              0 1 2 3 4   5 6 7 8 9   A B C D E
@@ -292,17 +275,18 @@ impl Row {
                 //
                 // in this scenario, the square at position D can be marked as filled in, because all possible
                 // runs that can contain it are of size >= 2.
+
                 let min_length = possible_runs.iter().map(|&r| self.runs[r].length).min().unwrap();
                 if min_length > seq.len() {
                     println!("  infer_run_assignments: all possible runs for sequence [{}, {}] are of length at least {}; marking additional squares away from field edges as filled in (where applicable)", seq.start, seq.end-1, min_length);
                 }
-                let field = self.fields.iter()
-                                       .filter(|field| field.contains(seq.start))
-                                       .next()
-                                       .expect(""); // TODO: code duplication from possible_runs_for_sequence
+                let field = self.get_fields().into_iter()
+                                             .filter(|field| field.contains(&seq.start))
+                                             .next()
+                                             .expect("");
 
-                let clamped_leftmost_start = max(seq.start - min_length + 1, field.range().start);
-                let clamped_rightmost_end  = min(seq.start + min_length,     field.range().end);
+                let clamped_leftmost_start = max(seq.start - min_length + 1, field.start);
+                let clamped_rightmost_end  = min(seq.start + min_length,     field.end);
 
                 let clamped_leftmost_range = clamped_leftmost_start .. (clamped_leftmost_start + min_length);
                 let clamped_rightmost_range = (clamped_rightmost_end - min_length) .. clamped_rightmost_end;
@@ -320,62 +304,6 @@ impl Row {
                     }
                 }
 
-            }
-        }
-
-        Ok(changes)
-    }
-
-    pub fn infer_status_assignments(&mut self) -> Result<Changes, Error>
-    {
-        // kind of the converse of infer_run_assignments: cross out squares that don't fall within the potential range
-        // of any of the runs.
-        let mut changes = Vec::<Change>::new();
-        for x in 0..self.length {
-            if !self.runs.iter().any(|r| r.might_contain_position(x)) {
-                if let Some(change) = self.get_square_mut(x).set_status(CrossedOut)? {
-                    changes.push(Change::from(change));
-                }
-            }
-        }
-
-        // look at single unknown squares inbetween sequences of filled in ones; if filling them in would create
-        // a sequence that can't exist at that position, then that square has to be crossed out.
-        //
-        // Example:
-        //              0 1 2 3 4   5 6 7 8 9   A B C D E
-        //   1 2 4    [ . .     X │ . X . . . │ . X . . . ]
-        //
-        //  run  1: min_start =  0, max_start =  6
-        //  run  2: min_start =  4, max_start =  8
-        //  run  4: min_start =  8, max_start = 11
-        //
-        // In this scenario, the square at position 5 cannot be filled in, because that would create a sequence
-        // of length 3 outside of the range of any run of length >= 3. Another reason could be that the field
-        // that the sequence lives in doesn't have enough space to contain any run length >= 3.
-        let filled_sequences = self._ranges_of(|s| s.get_status() == FilledIn)
-                                   .into_iter().collect::<Vec<_>>();
-        let gap_squares = (1..(self.length-1)).filter(|&x| self.get_square(x-1).get_status() == FilledIn
-                                                           && self.get_square(x).get_status() == Unknown
-                                                           && self.get_square(x+1).get_status() == FilledIn)
-                                              .collect::<Vec<_>>();
-        for gap_position in gap_squares
-        {
-            println!("  infer_status_assignments: found gap square at position {}", gap_position);
-            let filled_seq_left  = filled_sequences.iter().filter(|r| r.end   == gap_position).next().expect("");
-            let filled_seq_right = filled_sequences.iter().filter(|r| r.start == gap_position+1).next().expect("");
-            let joined_seq = filled_seq_left.start .. filled_seq_right.end;
-
-            // could a filled in sequence [filled_seq_left.start, filled_seq_right.end[ exist at this position?
-            // i.e., is there a run of length >= joined_len that might contain any of the squares in that range,
-            // and that could be placed in this field?
-            let possible_runs = self.possible_runs_for_sequence(&joined_seq);
-            if possible_runs.len() == 0 {
-                println!("  infer_status_assignments: no run can contain joined sequence of len {} if this square were to be filled in; crossing it out", joined_seq.len());
-                // no runs can contain the joined sequence if we filled in this gap square, so it has to be crossed out.
-                if let Some(change) = self.get_square_mut(gap_position).set_status(CrossedOut)? {
-                    changes.push(Change::from(change));
-                }
             }
         }
 
@@ -429,7 +357,6 @@ impl Row {
         Ok(changes)
     }
 
-    #[allow(unused_parens)]
     pub fn check_completed(&mut self) -> Result<Changes, Error> {
         // if all runs in this row have been completed, clear out any remaining squares
         // (also handles cases where the row is empty or only has 0-length runs)

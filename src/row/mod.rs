@@ -44,7 +44,6 @@ pub struct Row {
     pub index:      usize,
     pub length:     usize,
     pub runs:       Vec<Run>,
-    pub fields:     Vec<Field>,
     pub grid:       Rc<RefCell<Grid>>,
     pub completed:  bool,
 }
@@ -68,15 +67,42 @@ impl Row {
             index:     row_index,
             length:    row_length,
             runs:      runs,
-            fields:    Vec::<Field>::new(),
             grid:      Rc::clone(grid),
             completed: false,
         }
     }
+    fn _ranges_of<P>(&self, pred: P) -> Vec<Range<usize>>
+        where P: Fn(Ref<Square>) -> bool
+    {
+        // given a predicate on a square, returns a set of mutually exclusive ranges within this row 
+        // for which the predicate holds for all squares in that range.
+        let mut result = Vec::<Range<usize>>::new();
+        let mut x: usize = 0;
+        while x < self.length {
+            // skip past squares for which the predicate does not hold
+            while x < self.length && !pred(self.get_square(x)) {
+                x += 1;
+            }
+            if x >= self.length { break; }
 
-    pub fn make_field(&self, offset: usize, length: usize) -> Field {
-        Field::new(self.direction, offset, length, self.index, &self.grid)
+            // skip past squares for which the predicate does hold
+            let range_start = x;
+            x += 1; // we already tested the predicate on x at the end of the previous loop
+            while x < self.length && pred(self.get_square(x)) {
+                x += 1;
+            }
+            let range_end = x;
+            result.push(range_start..range_end);
+
+            x += 1;
+        }
+        result
     }
+    fn get_fields(&self) -> Vec<Range<usize>> {
+        // returns the set of ranges in this row of contiguous squares that are not crossed out
+        self._ranges_of(|sq| sq.get_status() != CrossedOut)
+    }
+
     pub fn is_completed(&self) -> bool {
         self.completed
     }
@@ -87,25 +113,16 @@ impl Row {
     {
         // answers the question: if a sequence of filled in squares would be placed
         // at the given position, which runs could that sequence (in its entirety) belong to?
-        // requirement on the input sequence position: must be contained entirely within a field.
 
         // the conditions for a run to be eligible to contain the sequence are:
         //  - the run must be at least as long as the sequence.
-        //  - the run must not be larger than the field the sequence is located in.
-        //  - ALL squares in the sequence must fall within the min/max bounds of the run.
-
-        // find the field that this sequence lives in (should always be exactly one).
-        //let seq = start..start+len;
-        let field = self.fields.iter()
-                               .filter(|field| field.contains(seq.start))
-                               .next()
-                               .expect(&format!("inconsistency: no field found that contains the sequence of filled squares [{}, {}] in {} row {}", seq.start, seq.end-1, self.direction, self.index));
-        assert!(field.contains(seq.end-1)); // by definition of a field (-1 because .end is exclusive)
-
+        //  - the run must contain a possible placement that contains ALL squares in the sequence
+        //    (or equivalently: it must contain BOTH the start and end square in the sequence)
         self.runs.iter()
                  .filter(|run| run.length >= seq.len()
-                               && run.length <= field.length
-                               && (seq.start..seq.end).all(|pos| run.might_contain_position(pos))) // TODO: might be simplifiable to only checking the first and last square of the sequence? not sure.
+                               && run.possible_placements.iter()
+                                                         .any(|range| range.contains(&seq.start)
+                                                                      && range.contains(&(seq.end-1))))
                  .map(|run| run.index)
                  .collect()
     }
@@ -127,9 +144,7 @@ pub struct Run {
     pub row_index: usize,
     pub row_length: usize,
     pub grid: Rc<RefCell<Grid>>,
-    //
-    pub min_start: Option<usize>,
-    pub max_start: Option<usize>,
+    pub possible_placements: Vec<Range<usize>>,
     completed: bool,
 }
 
@@ -148,22 +163,24 @@ impl Run {
             row_index,
             row_length,
             grid: Rc::clone(grid),
-            min_start: None,
-            max_start: None,
+            possible_placements: Vec::<Range<usize>>::new(),
             completed: false,
         }
     }
 }
 impl Run {
     pub fn complete(&mut self, start_at: usize) -> Result<Changes, Error> {
-        // found position for this run; cross out squares to the left and right of this run
+        // found final position for this run; cross out squares to the left and right,
+        // and set the final position as its only possible placement.
         let mut changes = Vec::<Change>::new();
         changes.extend(self.delineate_at(start_at)?);
+        self.possible_placements = vec![start_at..start_at+self.length];
         self.completed = true;
         Ok(changes)
     }
     pub fn delineate_at(&mut self, start_at: usize) -> Result<Changes, Error> {
-        // assuming that this run will be placed at the given starting position, cross out squares directly in front and behind of it
+        // assuming that this run will be placed at the given starting position,
+        // cross out squares directly in front and behind of it
         let mut changes = Vec::<Change>::new();
         if start_at > 0 {
             if let Some(change) = self.get_square_mut(start_at-1).set_status(CrossedOut)? {
@@ -187,12 +204,6 @@ impl Run {
         };
         style.paint(self.to_string())
     }
-    pub fn might_contain_position(&self, pos: usize) -> bool {
-        // returns true if this run has its min/max_start bounds set, and the given
-        // starting position falls within that range
-        self.min_start.is_some() && self.max_start.is_some() &&
-        self.min_start.unwrap() <= pos && pos < self.max_start.unwrap() + self.length
-    }
 }
 impl DirectionalSequence for Run {
     fn get_row_index(&self) -> usize { self.row_index }
@@ -205,55 +216,3 @@ impl fmt::Display for Run {
     }
 }
 
-#[derive(Debug)]
-pub struct Field {
-    pub direction: Direction,
-    pub offset: usize,
-    pub length: usize,
-    pub row_index: usize,
-    pub grid: Rc<RefCell<Grid>>,
-}
-
-impl Field {
-    pub fn new(direction: Direction,
-               offset: usize,
-               length: usize,
-               row_index: usize,
-               grid: &Rc<RefCell<Grid>>) -> Self
-    {
-        Field {
-            offset,
-            length,
-            direction,
-            row_index,
-            grid: Rc::clone(grid),
-        }
-    }
-    pub fn contains(&self, position: usize) -> bool {
-        self.range().contains(&position)
-    }
-    pub fn range(&self) -> Range<usize> {
-        self.offset..self.offset+self.length
-    }
-    pub fn run_fits(&self, run: &Run) -> bool {
-        self.run_lfits_at(run, 0)
-    }
-    pub fn run_lfits_at(&self, run: &Run, l_shift: usize) -> bool {
-        // does the given run fit in this field, starting at the given relative shift within the field?
-        // e.g.:
-        //       0 1 2 3 4 5 6 7
-        //     [ . . . . . . . . ]
-        //                 |
-        //                 shift
-        // => a run of length 3 would fit at shift=5 in a field of length 8
-        l_shift + run.length <= self.length
-    }
-    pub fn run_rfits_at(&self, run: &Run, r_shift: usize) -> bool {
-        // same as run_lfits_at, but for a run ending at the given relative shift position from the right
-        // within the field (an r_shift of 0 signifies ending exactly at the right boundary)
-
-        // actually identical to the lfits case except flipped 180 degrees,
-        // we're just "filling up" the field starting from the right side and going to the left now
-        r_shift + run.length <= self.length
-    }
-}
