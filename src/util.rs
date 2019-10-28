@@ -4,8 +4,8 @@ use std::io;
 use std::os::unix::io::AsRawFd;
 use ansi_term::ANSIString;
 
-pub fn stdout_color(s: &ANSIString) -> String {
-    match is_a_tty(io::stdout()) {
+pub fn maybe_color(s: &ANSIString, emit_color: bool) -> String {
+    match emit_color {
         true  => s.to_string(),
         false => (**s).to_string(), // deref once to get ANSIString, once more to get underlying str
     }
@@ -16,23 +16,23 @@ pub fn ralign(s: &str, width: usize) -> String {
     }
     format!("{}{}", " ".repeat(width-s.len()), s)
 }
-pub fn lalign_colored(s: &ANSIString, width: usize)
+pub fn lalign_colored(s: &ANSIString, width: usize, emit_color: bool)
     -> String
 {
     let visual_len = s.len(); // ANSIString.len() returns length WITHOUT escape sequences
     if visual_len >= width {
-        return stdout_color(s);
+        return maybe_color(s, emit_color);
     }
-    format!("{}{}", stdout_color(s), " ".repeat(width-visual_len))
+    format!("{}{}", maybe_color(s, emit_color), " ".repeat(width-visual_len))
 }
-pub fn ralign_joined_coloreds(strs: &Vec<ANSIString>, width: usize)
+pub fn ralign_joined_coloreds(strs: &Vec<ANSIString>, width: usize, emit_color: bool)
     -> String
 {
     let mut visual_len: usize = strs.iter().map(|ansi_str| ansi_str.len()).sum(); // ANSIString.len() returns length WITHOUT escape sequences
     visual_len += strs.len()-1; // count the spaces that .join(" ") will add
 
     let joined_colored = strs.iter()
-                             .map(|astr| stdout_color(astr))
+                             .map(|astr| maybe_color(astr, emit_color))
                              .collect::<Vec<_>>()
                              .join(" ");
     if visual_len >= width {

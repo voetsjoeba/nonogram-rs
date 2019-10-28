@@ -8,6 +8,7 @@ use std::collections::{VecDeque, HashSet};
 use yaml_rust::Yaml;
 use ansi_term::ANSIString;
 
+use super::Args;
 use super::grid::{Grid, Square, SquareStatus, Change, Changes, Error, HasGridLocation};
 use super::util::{ralign, lalign_colored, ralign_joined_coloreds, Direction, Direction::*, is_a_tty};
 use super::row::{Row, Run};
@@ -71,13 +72,13 @@ impl Puzzle {
         self.rows.iter().all(|r| r.is_completed()) &&
             self.cols.iter().all(|c| c.is_completed())
     }
-    pub fn solve(&mut self) -> Result<(), Error> {
+    pub fn solve(&mut self, args: &Args) -> Result<(), Error> {
         // keep a queue of rows to be looked at, and run the individual solvers on each
         // of them in sequence until there are none left in the queue. whenever a change
         // is made to a square in the grid, those rows are added back into the queue
         // for evaluation on the next run. completed runs are removed from the queue.
         println!("starting state:");
-        println!("\n{}", self);
+        println!("\n{}", self._fmt(args.visual_groups, args.emit_color));
 
         let mut queue = VecDeque::<(Direction, usize)>::new();
         queue.extend(self.rows.iter().map(|r| (r.direction, r.index)));
@@ -135,7 +136,7 @@ impl Puzzle {
                 }
 
 
-                println!("\n{}", self);
+                println!("\n{}", self._fmt(args.visual_groups, args.emit_color));
                 println!("--------------------------------------");
             }
             println!("");
@@ -143,7 +144,7 @@ impl Puzzle {
         }
 
         println!("final state:");
-        println!("\n{}", self);
+        println!("\n{}", self._fmt(args.visual_groups, args.emit_color));
 
         if self.is_completed() {
             println!("puzzle solved!");
@@ -183,7 +184,7 @@ impl Puzzle {
 
 impl Puzzle {
     // helper functions for Puzzle::fmt
-    fn _fmt(&self, subdivision: Option<usize>)
+    fn _fmt(&self, subdivision: Option<usize>, emit_color: bool)
         -> String
     {
         // if subdivision is given, insert visual subdivisor lines across the grid every Nth row/col
@@ -207,7 +208,7 @@ impl Puzzle {
         let grid = self.grid.borrow();
 
         for i in (0..max_col_runs).rev() {
-            result.push_str(&self._fmt_header(i, prefix_len, subdivision));
+            result.push_str(&self._fmt_header(i, prefix_len, subdivision, emit_color));
         }
 
         // top board line
@@ -218,20 +219,22 @@ impl Puzzle {
             "\u{2564}",
             subdivision,
             &(0..self.width()).map(|_| String::from("\u{2550}\u{2550}\u{2550}"))
-                              .collect::<Vec<_>>()
+                              .collect::<Vec<_>>(),
+            emit_color,
         ));
 
         for y in 0..self.height() {
             // board content line
             result.push_str(&Self::_fmt_line(
-                &ralign_joined_coloreds(&row_prefixes[y], prefix_len),
+                &ralign_joined_coloreds(&row_prefixes[y], prefix_len, emit_color),
                 "\u{2551}",
                 "\u{2551}",
                 "\u{2502}",
                 subdivision,
                 &grid.squares[y].iter()
                                 .map(|s| format!(" {:1} ", s))
-                                .collect::<Vec<_>>()
+                                .collect::<Vec<_>>(),
+                emit_color,
             ));
 
             // horizontal subdivisor line
@@ -244,7 +247,8 @@ impl Puzzle {
                         "\u{253C}",
                         subdivision,
                         &(0..self.width()).map(|_| String::from("\u{2500}\u{2500}\u{2500}"))
-                                          .collect::<Vec<_>>()
+                                          .collect::<Vec<_>>(),
+                        emit_color,
                     ));
                 }
             }
@@ -257,7 +261,8 @@ impl Puzzle {
             "\u{2567}",
             subdivision,
             &(0..self.width()).map(|_| String::from("\u{2550}\u{2550}\u{2550}"))
-                              .collect::<Vec<_>>()
+                              .collect::<Vec<_>>(),
+            emit_color,
         ));
 
         return result;
@@ -268,7 +273,8 @@ impl Puzzle {
                  right_delim: &str,
                  columnwise_separator: &str,
                  subdivision: Option<usize>,
-                 content_parts: &Vec<String>)
+                 content_parts: &Vec<String>,
+                 emit_color: bool)
         -> String
     {
         let mut result = format!("{} {}", prefix, left_delim);
@@ -286,7 +292,8 @@ impl Puzzle {
 
     fn _fmt_header(&self, line_idx: usize,
                           prefix_len: usize,
-                          subdivision: Option<usize>)
+                          subdivision: Option<usize>,
+                          emit_color: bool)
         -> String
     {
         let mut content_parts = Vec::<String>::new();
@@ -294,7 +301,7 @@ impl Puzzle {
             let part: String;
             if line_idx < col.runs.len() {
                 let colored = col.runs[col.runs.len()-1-line_idx].to_colored_string();
-                part = format!(" {}", lalign_colored(&colored, 2));
+                part = format!(" {}", lalign_colored(&colored, 2, emit_color));
             } else {
                 part = format!(" {:-2}", " ");
             }
@@ -308,15 +315,15 @@ impl Puzzle {
             " ",
             " ",
             subdivision,
-            &content_parts
+            &content_parts,
+            emit_color,
         )
     }
 }
 impl fmt::Display for Puzzle {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        //let subdivision = None;
         let subdivision = Some(5);
-        write!(f, "{}", self._fmt(subdivision))
+        write!(f, "{}", self._fmt(subdivision, false))
     }
 }
 
