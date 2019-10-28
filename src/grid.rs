@@ -66,8 +66,8 @@ pub struct RunChange {
     pub new: usize,
 }
 impl RunChange {
-    fn new(sq: &Square, direction: Direction, old: Option<usize>, new: usize) -> Self {
-        Self { row: sq.row, col: sq.col, direction, old, new }
+    fn new(row: usize, col: usize, direction: Direction, old: Option<usize>, new: usize) -> Self {
+        Self { row, col, direction, old, new }
     }
 }
 impl HasGridLocation for RunChange {
@@ -242,41 +242,25 @@ impl Square {
     pub fn set_run_index(&mut self, direction: Direction, new_index: usize)
         -> RunResult
     {
-        match direction {
-            Horizontal => {
-                let cand_change = RunChange::new(&self, direction, self.hrun_index, new_index);
-                if self.status != SquareStatus::FilledIn {
-                    return Err(RunError::NotFilledIn(cand_change))
-                }
-                if let Some(x) = self.hrun_index {
-                    if x != new_index {
-                        return Err(RunError::ChangeRejected(cand_change, "conflicting information".to_string()));
-                    }
-                }
-                if self.hrun_index == None || self.hrun_index != Some(new_index) {
-                    self.hrun_index = Some(new_index);
-                    return Ok(Some(cand_change));
-                } else {
-                    return Ok(None);
-                }
-            },
-            Vertical   => {
-                let cand_change = RunChange::new(&self, direction, self.vrun_index, new_index);
-                if self.status != SquareStatus::FilledIn {
-                    return Err(RunError::NotFilledIn(cand_change))
-                }
-                if let Some(x) = self.vrun_index {
-                    if x != new_index {
-                        return Err(RunError::ChangeRejected(cand_change, "conflicting information".to_string()));
-                    }
-                }
-                if self.vrun_index == None || self.vrun_index != Some(new_index) {
-                    self.vrun_index = Some(new_index);
-                    return Ok(Some(cand_change));
-                } else {
-                    return Ok(None);
-                }
-            },
+        let field = match direction {
+            Horizontal => &mut self.hrun_index,
+            Vertical   => &mut self.vrun_index,
+        };
+
+        let cand_change = RunChange::new(self.row, self.col, direction, *field, new_index);
+        if self.status != SquareStatus::FilledIn {
+            return Err(RunError::NotFilledIn(cand_change))
+        }
+        if let Some(x) = *field {
+            if x != new_index {
+                return Err(RunError::ChangeRejected(cand_change, "conflicting information".to_string()));
+            }
+        }
+        if *field == None || *field != Some(new_index) {
+            *field = Some(new_index);
+            return Ok(Some(cand_change));
+        } else {
+            return Ok(None);
         }
     }
     pub fn assign_run(&mut self, run: &Run) -> RunResult {
