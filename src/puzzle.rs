@@ -2,7 +2,7 @@
 use std::fmt;
 use std::io;
 use std::rc::Rc;
-use std::cell::{Ref, RefCell};
+use std::cell::{Ref, RefMut, RefCell};
 use std::convert::TryFrom;
 use std::collections::{VecDeque, HashSet};
 use yaml_rust::Yaml;
@@ -68,11 +68,26 @@ impl Puzzle {
         }
     }
 
+    fn get_square(&self, x: usize, y: usize) -> Ref<Square> {
+        let grid = self.grid.borrow();
+        Ref::map(grid, |g| g.get_square(x, y))
+    }
+    fn get_square_mut(&self, x: usize, y: usize) -> RefMut<Square> {
+        let grid = self.grid.borrow_mut();
+        RefMut::map(grid, |g| g.get_square_mut(x, y))
+    }
+    fn apply_change(&mut self, change: Change) -> Result<Option<Change>, Error> {
+        let mut square = self.get_square_mut(change.get_col(), change.get_row());
+        square.apply_change(change)
+    }
+
     pub fn is_completed(&self) -> bool {
         self.rows.iter().all(|r| r.is_completed()) &&
             self.cols.iter().all(|c| c.is_completed())
     }
-    pub fn solve(&mut self, args: &Args) -> Result<(), Error> {
+
+    pub fn solve(&mut self, args: &Args) -> Result<(), Error>
+    {
         // keep a queue of rows to be looked at, and run the individual solvers on each
         // of them in sequence until there are none left in the queue. whenever a change
         // is made to a square in the grid, those rows are added back into the queue
@@ -84,105 +99,134 @@ impl Puzzle {
         queue.extend(self.rows.iter().map(|r| (r.direction, r.index)));
         queue.extend(self.cols.iter().map(|c| (c.direction, c.index)));
 
+        let mut on_stall_actions_applied = false;
+
+        macro_rules! refeed_change {
+            // takes a change and feeds the row and column that it affected back into the
+            // queue.
+            ($change:expr) => {{
+                let (row, col) = ($change.get_row(), $change.get_col());
+                let h_value = (self.rows[row].direction, self.rows[row].index);
+                let v_value = (self.cols[col].direction, self.cols[col].index);
+                if !queue.contains(&v_value) { queue.push_back(v_value); }
+                if !queue.contains(&h_value) { queue.push_back(h_value); }
+            }}
+        }
+
         let mut cur_iteration = 0usize;
         let max_iterations = 100000usize;
-        while let Some((d,i)) = queue.pop_front()
+        loop
         {
-            cur_iteration += 1;
-            if cur_iteration >= max_iterations {
-                panic!("max iterations exceeded, aborting");
-            }
-
-            println!("starting solvers on {} row {}", d, i);
-            let mut changes = Vec::<Change>::new();
+            while let Some((d,i)) = queue.pop_front()
             {
-                let row = match d {
-                    Horizontal => &mut self.rows[i],
-                    Vertical   => &mut self.cols[i],
-                };
-
-                // before doing any further work, check whether this row is already_completed
-                // (includes handling of trivial cases like empty rows etc)
-                changes.extend(row.check_completed_runs()?);
-                changes.extend(row.check_completed()?);
-
-                if !row.is_completed() {
-                    row.update_possible_run_placements();
-                    changes.extend(row.infer_run_assignments()?);
-                    changes.extend(row.infer_status_assignments()?);
-                }
-            }
-
-            if changes.len() == 0 {
-                println!("finished solvers on {} row {}; no changes", d, i);
-            }
-            if changes.len() > 0
-            {
-                println!("finished solvers on {} row {}; changes in this iteration:", d, i);
-                for change in &changes {
-                    println!("  {}", change);
+                cur_iteration += 1;
+                if cur_iteration >= max_iterations {
+                    panic!("max iterations exceeded, aborting");
                 }
 
-                // we made changes to one or more squares in the grid; for each square that was affected,
-                // add the horizontal and vertical rows that cross it back into the queue for re-evaluation
-                for change in &changes {
-                    let h_row = &self.rows[change.get_row()];
-                    let v_row = &self.cols[change.get_col()];
+                println!("starting solvers on {} row {}", d, i);
+                let mut changes = Vec::<Change>::new();
+                {
+                    let row = match d {
+                        Horizontal => &mut self.rows[i],
+                        Vertical   => &mut self.cols[i],
+                    };
 
-                    let h_value = (h_row.direction, h_row.index);
-                    let v_value = (v_row.direction, v_row.index);
-                    if !queue.contains(&v_value) { queue.push_back(v_value); }
-                    if !queue.contains(&h_value) { queue.push_back(h_value); }
-                }
+                    // before doing any further work, check whether this row is already_completed
+                    // (includes handling of trivial cases like empty rows etc)
+                    changes.extend(row.check_completed_runs()?);
+                    changes.extend(row.check_completed()?);
 
-
-                println!("\n{}", self._fmt(args.visual_groups, args.emit_color));
-                println!("--------------------------------------");
-            }
-            println!("");
-
-        }
-
-        println!("final state:");
-        println!("\n{}", self._fmt(args.visual_groups, args.emit_color));
-
-        if self.is_completed() {
-            println!("puzzle solved!");
-        } else {
-            println!("puzzle partially solved, out of actions.");
-            println!("run possible placements:");
-            for row in self.rows.iter().chain(self.cols.iter()) {
-                if row.is_trivially_empty() { continue; }
-                println!("  {:-10} row {:2}:", row.direction, row.index);
-                for run in &row.runs {
-                    println!("    run {:2} (len {}): {}", run.index, run.length,
-                        run.possible_placements.iter()
-                                               .map(|range| format!("[{},{}]", range.start, range.end-1))
-                                               .collect::<Vec<_>>()
-                                               .join(", "));
-                }
-            }
-
-            println!("run assignment overview:");
-            let grid = self.grid.borrow();
-            for x in 0..self.width() {
-                for y in 0..self.height() {
-                    let square: &Square = grid.get_square(x, y);
-                    if square.get_status() == SquareStatus::FilledIn {
-                        println!("  {}: hrun_index={}, vrun_index={}",
-                            square.fmt_location(),
-                            if let Some(idx) = square.get_run_index(Direction::Horizontal) { idx.to_string() } else { "None".to_string() },
-                            if let Some(idx) = square.get_run_index(Direction::Vertical) { idx.to_string() } else { "None".to_string() }
-                        );
+                    if !row.is_completed() {
+                        row.update_possible_run_placements();
+                        changes.extend(row.infer_run_assignments()?);
+                        changes.extend(row.infer_status_assignments()?);
                     }
                 }
+
+                if changes.len() == 0 {
+                    println!("finished solvers on {} row {}; no changes", d, i);
+                }
+                else {
+                    // we made changes to one or more squares in the grid; for each square that was affected,
+                    // add the horizontal and vertical rows that cross it back into the queue for re-evaluation
+                    println!("finished solvers on {} row {}; changes in this iteration:", d, i);
+                    for change in &changes {
+                        println!("  {}", change);
+                        refeed_change!(change);
+                    }
+
+                    println!("\n{}", self._fmt(args.visual_groups, args.emit_color));
+                    println!("--------------------------------------");
+                }
+                println!("");
+
+            } // end while
+
+            println!("final state:");
+            println!("\n{}", self._fmt(args.visual_groups, args.emit_color));
+
+            if self.is_completed() {
+                println!("puzzle solved! ({} iterations)", cur_iteration);
+                break; // break out of outer loop
             }
-        }
+
+            println!("puzzle partially solved, out of actions ({} iterations).", cur_iteration);
+
+            // if the user gave us some actions to apply on a stall, apply those now and resume
+            // looping; otherwise, report failure to solve and bail out.
+            if args.actions_on_stall.len() > 0 && !on_stall_actions_applied {
+                println!("\napplying user-supplied actions on stall:");
+                for change in &args.actions_on_stall {
+                    println!("  {}", change);
+                    self.apply_change((*change).clone()).expect("");
+                    refeed_change!(change);
+                }
+                on_stall_actions_applied = true;
+
+                println!("resuming solver loop\n");
+                continue;
+            }
+            self.dump_state();
+            break;
+        } // end loop
+
         Ok(())
-    }
+    } // end solve
+
 }
 
 impl Puzzle {
+    fn dump_state(&self) {
+        println!("run possible placements:");
+        for row in self.rows.iter().chain(self.cols.iter()) {
+            if row.is_trivially_empty() { continue; }
+            println!("  {:-10} row {:2}:", row.direction, row.index);
+            for run in &row.runs {
+                println!("    run {:2} (len {}): {}", run.index, run.length,
+                    run.possible_placements.iter()
+                                           .map(|range| format!("[{},{}]", range.start, range.end-1))
+                                           .collect::<Vec<_>>()
+                                           .join(", "));
+            }
+        }
+
+        println!("run assignment overview:");
+        let grid = self.grid.borrow();
+        for y in 0..self.height() {
+            for x in 0..self.width() {
+                let square: &Square = grid.get_square(x, y);
+                if square.get_status() == SquareStatus::FilledIn {
+                    println!("  {}: hrun_index={}, vrun_index={}",
+                        square.fmt_location(),
+                        if let Some(idx) = square.get_run_index(Direction::Horizontal) { idx.to_string() } else { "?".to_string() },
+                        if let Some(idx) = square.get_run_index(Direction::Vertical) { idx.to_string() } else { "?".to_string() }
+                    );
+                }
+            }
+        }
+    }
+
     // helper functions for Puzzle::fmt
     fn _fmt(&self, subdivision: Option<usize>, emit_color: bool)
         -> String

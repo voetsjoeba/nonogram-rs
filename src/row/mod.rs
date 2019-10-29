@@ -98,7 +98,7 @@ impl Row {
         }
         result
     }
-    fn get_fields(&self) -> Vec<Range<usize>> {
+    pub fn get_fields(&self) -> Vec<Range<usize>> {
         // returns the set of ranges in this row of contiguous squares that are not crossed out
         self._ranges_of(|sq| sq.get_status() != CrossedOut)
     }

@@ -1,6 +1,7 @@
 // vim: set ai et ts=4 sw=4 sts=4:
 use std::fmt;
 use std::io;
+use std::convert::TryFrom;
 use std::os::unix::io::AsRawFd;
 use ansi_term::ANSIString;
 
@@ -54,6 +55,16 @@ impl fmt::Display for Direction {
             Direction::Horizontal => "Horizontal",
             Direction::Vertical   => "Vertical",
         })
+    }
+}
+impl TryFrom<&str> for Direction {
+    type Error = &'static str;
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "Horizontal" => Ok(Direction::Horizontal),
+            "Vertical"   => Ok(Direction::Vertical),
+            _            => Err("Not a valid Direction value")
+        }
     }
 }
 

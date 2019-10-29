@@ -1,6 +1,6 @@
 // vim: set ai et ts=4 sts=4:
 use std::fmt;
-use std::convert::From;
+use std::convert::{From, TryFrom};
 use super::util::{Direction, Direction::*};
 use super::row::Run;
 
@@ -8,7 +8,7 @@ pub trait HasGridLocation {
     fn get_row(&self) -> usize;
     fn get_col(&self) -> usize;
     fn fmt_location(&self) -> String {
-        format!("(col={}, row={})", self.get_col(), self.get_row())
+        format!("(col={:-2}, row={:-2})", self.get_col(), self.get_row())
     }
 }
 
@@ -27,10 +27,21 @@ impl fmt::Display for SquareStatus {
         })
     }
 }
+impl TryFrom<&str> for SquareStatus {
+    type Error = &'static str;
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "FilledIn"   => Ok(SquareStatus::FilledIn),
+            "CrossedOut" => Ok(SquareStatus::CrossedOut),
+            "Unknown"    => Ok(SquareStatus::Unknown),
+            _            => Err("Not a valid SquareStatus value")
+        }
+    }
+}
 
 // ------------------------------------------------
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub struct StatusChange {
     pub row: usize,
     pub col: usize,
@@ -38,8 +49,8 @@ pub struct StatusChange {
     pub new: SquareStatus,
 }
 impl StatusChange {
-    fn new(sq: &Square, old: SquareStatus, new: SquareStatus) -> Self {
-        Self { row: sq.row, col: sq.col, old, new }
+    pub fn new(row: usize, col: usize, old: SquareStatus, new: SquareStatus) -> Self {
+        Self { row, col, old, new }
     }
 }
 impl HasGridLocation for StatusChange {
@@ -57,7 +68,7 @@ impl fmt::Display for StatusChange {
 
 // ------------------------------------------------
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub struct RunChange {
     pub row: usize,
     pub col: usize,
@@ -66,7 +77,7 @@ pub struct RunChange {
     pub new: usize,
 }
 impl RunChange {
-    fn new(row: usize, col: usize, direction: Direction, old: Option<usize>, new: usize) -> Self {
+    pub fn new(row: usize, col: usize, direction: Direction, old: Option<usize>, new: usize) -> Self {
         Self { row, col, direction, old, new }
     }
 }
@@ -89,6 +100,7 @@ impl fmt::Display for RunChange {
 
 // ------------------------------------------------
 
+#[derive(Debug, Clone)]
 pub enum Change {
     Status(StatusChange),
     Run(RunChange),
@@ -167,6 +179,7 @@ impl fmt::Display for RunError {
 pub type StatusResult = Result<Option<StatusChange>, StatusError>; // if it worked: the change, if any; if it didn't, the change that was rejected
 pub type RunResult    = Result<Option<RunChange>, RunError>; // ditto
 
+#[derive(Debug)]
 pub enum Error {
     Status(StatusError),
     Run(RunError),
@@ -215,22 +228,9 @@ impl Square {
     pub fn get_col(&self) -> usize { self.col }
     pub fn get_status(&self) -> SquareStatus { self.status }
 
-    pub fn set_status(&mut self, new_status: SquareStatus) -> StatusResult
-    {
-        let cand_change = StatusChange::new(&self, self.status, new_status);
-        // if this square's status is already known, it can't be changed anymore,
-        // otherwise that's a conflict
-        if self.status != SquareStatus::Unknown {
-            if self.status != new_status {
-                return Err(StatusError::ChangeRejected(cand_change, "conflicting information".to_string()));
-            }
-        }
-
-        if self.status != new_status {
-            self.status = new_status;
-            return Ok(Some(cand_change));
-        }
-        return Ok(None);
+    pub fn set_status(&mut self, new_status: SquareStatus) -> StatusResult {
+        let cand_change = StatusChange::new(self.row, self.col, self.status, new_status);
+        self.apply_status_change(cand_change)
     }
 
     pub fn get_run_index(&self, direction: Direction) -> Option<usize> {
@@ -242,26 +242,8 @@ impl Square {
     pub fn set_run_index(&mut self, direction: Direction, new_index: usize)
         -> RunResult
     {
-        let field = match direction {
-            Horizontal => &mut self.hrun_index,
-            Vertical   => &mut self.vrun_index,
-        };
-
-        let cand_change = RunChange::new(self.row, self.col, direction, *field, new_index);
-        if self.status != SquareStatus::FilledIn {
-            return Err(RunError::NotFilledIn(cand_change))
-        }
-        if let Some(x) = *field {
-            if x != new_index {
-                return Err(RunError::ChangeRejected(cand_change, "conflicting information".to_string()));
-            }
-        }
-        if *field == None || *field != Some(new_index) {
-            *field = Some(new_index);
-            return Ok(Some(cand_change));
-        } else {
-            return Ok(None);
-        }
+        let cand_change = RunChange::new(self.row, self.col, direction, self.get_run_index(direction), new_index);
+        self.apply_run_change(cand_change)
     }
     pub fn assign_run(&mut self, run: &Run) -> RunResult {
         self.set_run_index(run.direction, run.index)
@@ -269,6 +251,69 @@ impl Square {
     pub fn has_run_assigned(&self, run: &Run) -> bool {
         self.get_run_index(run.direction) == Some(run.index)
     }
+    pub fn apply_status_change(&mut self, cand_change: StatusChange)
+        -> StatusResult
+    {
+        assert!(cand_change.row == self.row);
+        assert!(cand_change.col == self.col);
+
+        // if this square's status is already known, it can't be changed anymore,
+        // that would be a conflict
+        if self.status != SquareStatus::Unknown {
+            if self.status != cand_change.new {
+                return Err(StatusError::ChangeRejected(cand_change, "conflicting information".to_string()));
+            }
+        }
+        if self.status != cand_change.new {
+            self.status = cand_change.new;
+            return Ok(Some(cand_change));
+        }
+        return Ok(None);
+    }
+    pub fn apply_run_change(&mut self, cand_change: RunChange)
+        -> RunResult
+    {
+        assert!(cand_change.row == self.row);
+        assert!(cand_change.col == self.col);
+
+        let field = match cand_change.direction {
+            Horizontal => &mut self.hrun_index,
+            Vertical   => &mut self.vrun_index,
+        };
+        if self.status != SquareStatus::FilledIn {
+            return Err(RunError::NotFilledIn(cand_change))
+        }
+        if let Some(x) = *field {
+            if x != cand_change.new {
+                return Err(RunError::ChangeRejected(cand_change, "conflicting information".to_string()));
+            }
+        }
+        if *field == None || *field != Some(cand_change.new) {
+            *field = Some(cand_change.new);
+            return Ok(Some(cand_change));
+        } else {
+            return Ok(None);
+        }
+    }
+    pub fn apply_change(&mut self, cand_change: Change)
+        -> Result<Option<Change>, Error>
+    {
+        match cand_change {
+            Change::Status(status_change)
+                => match self.apply_status_change(status_change) {
+                       Ok(None)          => Ok(None),
+                       Ok(Some(x))       => Ok(Some(Change::from(x))),
+                       Err(status_error) => Err(Error::from(status_error)),
+                   }
+            Change::Run(run_change)
+                => match self.apply_run_change(run_change) {
+                       Ok(None)          => Ok(None),
+                       Ok(Some(x))       => Ok(Some(Change::from(x))),
+                       Err(run_error)    => Err(Error::from(run_error)),
+                   }
+        }
+    }
+
     pub fn fmt_visual(&self) -> &str {
         match self.status {
             SquareStatus::CrossedOut => " ",
