@@ -5,9 +5,9 @@ use std::convert::{TryInto, TryFrom};
 use std::cmp::{min, max};
 use std::rc::{Rc, Weak};
 use std::cell::{Ref, RefMut, RefCell};
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 use super::{Row, Run, DirectionalSequence};
-use super::super::util::{Direction, Direction::*, vec_remove_item};
+use super::super::util::{Direction, Direction::{Horizontal, Vertical}, vec_remove_item};
 use super::super::grid::{Grid, Square, SquareStatus::{CrossedOut, FilledIn, Unknown},
                          Changes, Change, Error, HasGridLocation};
 
@@ -168,10 +168,12 @@ impl Row {
 
     pub fn infer_status_assignments(&mut self) -> Result<Changes, Error>
     {
+        println!("  infer_status_assignments:");
+        let mut changes = Vec::<Change>::new();
+
         // look at the possible placements of each run:
         // - if there are squares that are part of all of them, then those must necessarily be filled in and assigned to that run.
         // - if there's only one possible placement, then we can place it at that position and mark the run as completed
-        let mut changes = Vec::<Change>::new();
         for run in &mut self.runs
         {
             if run.is_completed() { continue; } // nothing to do
@@ -179,6 +181,8 @@ impl Row {
                 let mut square: RefMut<Square> = run.get_square_mut(pos);
                 if run.possible_placements.iter().all(|range| range.contains(&pos))
                 {
+                    println!("    square {} is present in all possible placements of run #{} (len {}), marking it filled and assigned",
+                        square.fmt_location(), run.index, run.length);
                     if let Some(change) = square.set_status(FilledIn)? {
                         changes.push(Change::from(change));
                     }
@@ -189,6 +193,7 @@ impl Row {
             }
 
             if run.possible_placements.len() == 1 {
+                println!("    run #{} (len {}) only has one possible placement, marking it completed", run.index, run.length);
                 let range = run.possible_placements[0].clone(); // clone to avoid immutable borrow through mut ref
                 changes.extend(run.complete(range.start)?);
             }
@@ -219,94 +224,274 @@ impl Row {
 
     pub fn infer_run_assignments(&mut self) -> Result<Changes, Error>
     {
+        println!("  infer_run_assignments:");
         let mut changes = Vec::<Change>::new();
-        let filled_sequences = self._ranges_of(|s| s.get_status() == FilledIn)
-                                   .into_iter().collect::<Vec<_>>();
 
-        // look through this row for contiguous ("attached") sequences of filled squares;
-        // for each one found, determine which runs that sequence could be part of:
-        //  - if there's only one possible run, then we can unambiguously assign it
-        //  - if there are multiple runs, but they're all of the same length as the sequence, then
-        //    we can confirm the length of the sequence and cross out squares in front and behind of it
+		// find sequences of non-completed runs in this row, and their associated range within the
+        // row within which they must be placed. within that range, find contiguous sequences of
+        // filled squares that do not yet have a run assigned to them (in fact, by definition
+        // all such sequences in that range must not have a range assigned yet).
+
+        // e.g.:
+        // consider this situation (completed runs marked with 'x's above them):
         //
-        // after assigning a run to a square, update that run's set of possible placements as well,
-        // since those might have tightened up now.
-        for seq_idx in 0..filled_sequences.len()
+        //                                    11  13  15  17  19  21  23
+        //   x     x    0 1 2 3 4 5 6 7 8 9 10  12  14  16  18  20  22  24
+        //   3 2 1 3   [X X X - .│. . - - X│. . . - .│. . X . -│. - X X X]
+        //
+        // in this scenario, the sequence of incomplete runs we're interested in is [2,1],
+        // which must be placed anywhere within the range [4,20].
+
+        // for each sequence of filled squares, start off by building up a set of possible runs
+        // according to the current information about each run (i.e. their currently-known possible placements),
+        // and see if we can eliminate some possibilities.
+
+        // the rules for determining which runs could (or could not) be assigned to a sequence are:
+        //  - the rightmost run cannot appear in sequences that have other filled squares to their right further away than the length of that run
+        //  - the leftmost run cannot appear in sequences that have other filled squares to their left further away than the length of that run
+        //  - a run cannot appear in sequences to the left of the rightmost sequence on which ONLY previous runs are possible
+        //  - a run cannot appear in sequences to the right of the lefmost sequence on which only following runs are possible
+
+        // whenever we can remove a run from the possibility set of a sequence, drop the corresponding placements
+        // from that run's set of possible placements, so that update_possible_run_placements can pick up on this
+        // new information.
+        // TODO: update_possible_run_placements throws away all current possible placements and recalculates from
+        // scratch; should we make it respect any previously removed placements, or hope that this logic can identify
+        // a unique placement? for now, don't actually do this.
+
+        // if we find a sequence that can only have one run assigned to it, record that square as
+        // definitely belonging to that run, so that update_possible_run_placements can pick up on this new information.
+
+		// rules:
+        // a) the rightmost run cannot appear in sequences that have other sequences to their right further away than the length of that run
+        // b) the leftmost run cannot appear in sequences that have other sequences to their left further away than the length of that run
+        // c) a run cannot appear in sequences to the left of the rightmost sequence on which ONLY previous runs are possible
+        // d) a run cannot appear in sequences to the right of the lefmost sequence on which ONLY following runs are possible
+
+
+        // --------------------------------------------------------------------------------
+
+
+        // find sequences of incomplete runs and the range within the row that they need to be positioned in.
+
+        let fields = self.get_fields();
+        let incomplete_run_sequences = self._ranges_of_runs(|r| !r.is_completed())
+                                           .into_iter()
+                                           .collect::<Vec<_>>();
+
+        for runs_range in incomplete_run_sequences
         {
-            let seq = &filled_sequences[seq_idx];
-            let possible_runs = self.possible_runs_for_sequence(seq);
+            // reminder: runs_range is a range of indices into self.runs containing a contiguous sequence of non-completed runs.
 
-            if possible_runs.len() == 0 {
-                panic!("Inconsistency: no run found that can encompass the sequence of filled squares [{}, {}] in {} row {}", seq.start, seq.end-1, self.direction, self.index);
+            // determine the associated range within the row within which these non-completed runs must be located:
+            //   range start = start of first field following the previous completed run, if any
+            //                 otherwise, the start of the first field in this row.
+            //   range end   = end of last field prior to next completed run, if any
+            //                 otherwise, the end of the last field in this row.
+
+            let mut sq_range_start = fields.first().unwrap().start;
+            let mut sq_range_end   = fields.last().unwrap().end;
+            if runs_range.start > 0 {
+                // there is an earlier completed run
+                let prev_completed_run = &self.runs[runs_range.start-1];
+                assert!(prev_completed_run.is_completed());
+                sq_range_start = fields.iter()
+                                       .filter(|field| field.start > prev_completed_run.completed_placement().end)
+                                       .next().unwrap()
+                                       .start;
             }
-            else if possible_runs.len() == 1 {
-                // only one run could possibly encompass this sequence; assign it to each square
-                let run = &self.runs[possible_runs[0]];
+            if runs_range.end < self.runs.len() {
+                // there is a completed run after this
+                let next_completed_run = &self.runs[runs_range.end];
+                assert!(next_completed_run.is_completed());
+                sq_range_end = fields.iter()
+                                     .filter(|field| field.end < next_completed_run.completed_placement().start)
+                                     .last().unwrap()
+                                     .end;
+            }
 
-                for x in seq.start..seq.end {
-                    if let Some(change) = self.get_square_mut(x).assign_run(run)? {
-                        println!("  infer_run_assignments: found singular run assignment for sequence [{}, {}]: run {} (len {})", seq.start, seq.end-1, run.index, run.length);
-                        changes.push(Change::from(change));
+            let squares_range = sq_range_start .. sq_range_end;
+            println!("    found range <{},{}> of non-completed runs, to receive positions within the square range [{},{}]",
+                runs_range.start, runs_range.end-1, squares_range.start, squares_range.end-1);
+
+            // determine the set of filled sequences within the range we've just identified (might be empty!)
+            let filled_sequences: Vec<Range<usize>> = self._ranges_of_squares(|sq, pos| sq.get_status() == FilledIn
+                                                                                        && squares_range.contains(&pos))
+                                                          .into_iter()
+                                                          .collect();
+            if filled_sequences.is_empty() {
+                println!("    no filled sequences in row, exiting early");
+                continue; // nothing useful to do if there are no sequences of filled squares in the range
+            }
+
+            // for each sequence of filled squares, determine the set of possible runs that could
+            // be assigned to it according to the current information.
+            let mut possible_runs_map = HashMap::<usize, Vec<usize>>::new(); // maps sequence index to list of possible run indices
+            for (i, seq) in filled_sequences.iter().enumerate() {
+                let possible_runs = self.possible_runs_for_sequence(seq);
+                possible_runs_map.insert(i, possible_runs);
+            }
+
+            println!("    list of possible runs per sequence:");
+            for (&seq_idx, possible_runs) in &possible_runs_map
+            {
+                let seq = &filled_sequences[seq_idx];
+                println!("      seq [{:-2}, {:-2}]: possible runs = {}",
+                    seq.start, seq.end-1,
+                    possible_runs.iter().map(|&run_idx| format!("run #{} (len {})", run_idx, self.runs[run_idx].length))
+                                        .collect::<Vec<_>>().join(", "));
+            }
+
+            // a) the rightmost run cannot appear in sequences that have other sequences to their right further away than the length of that run
+            //    or equivalently: the rightmost run can only appear in the rightmost sequence or sequences that are less than the length of the run away from it to the left (i.e. that can't be part of the same run).
+            // b) the leftmost run cannot appear in sequences that have other sequences to their left further away than the length of that run
+            //    or equivalently: the leftmost run can only appear in the leftmost sequence or sequences that are less than the length of the run away from it to the right (i.e. that can't be part of the same run).
+
+            let leftmost_run = &self.runs[runs_range.start];
+            let rightmost_run = &self.runs[runs_range.end-1];
+            let leftmost_seq  = filled_sequences.first().unwrap();
+            let rightmost_seq = filled_sequences.last().unwrap();
+
+            for (i, seq) in filled_sequences.iter().enumerate() {
+                if (leftmost_seq.start .. seq.end).len() > leftmost_run.length {
+                    // this sequence is further than length(leftmost_run) away from the leftmost sequence; can't have the leftmost run as a possibility
+                    let removed = vec_remove_item(&mut possible_runs_map.get_mut(&i).unwrap(), &leftmost_run.index);
+                    if let Some(_) = removed {
+                        println!("    removed the possibility of leftmost run #{} (len {}) being assigned to the sequence at [{},{}]: is more than the length of the leftmost run {} removed from the leftmost sequence at [{},{}]",
+                            leftmost_run.index, leftmost_run.length, seq.start, seq.end-1, leftmost_run.length, leftmost_seq.start, leftmost_seq.end-1);
                     }
                 }
-
-                // on the next iteration, update_possible_run_placements will pick up on the fact that this square
-                // got a run assigned to it, and update its possible placements accordingly.
             }
-            else {
-                // ok, we couldn't identify an exact run; see if there's anything else we can determine with the
-                // information we have.
-
-                // if all possible runs for this sequence are of the same length that the sequence already has,
-                // then we can at least confirm its placement despite not knowing exactly which one it is yet.
-                if possible_runs.iter().all(|&r| self.runs[r].length == seq.len()) {
-                    //println!("all possible runs that might contain the sequence [{}, {}] are of the same length: {}", seq.start, seq.end-1, seq.len());
-                    // pick any run (doesn't matter which one, they're all the same length), pretend it will be placed
-                    // at this sequence's position, and cross out the squares directly in front of and behind it.
-                    changes.extend(self.runs[possible_runs[0]].delineate_at(seq.start)?);
-                }
-
-                // if all possible runs are of a certain minimum length, we can 'bounce' that length
-                // against the edges of the containing field to find additional squares to be filled in.
-                //
-                // example:
-                //              0 1 2 3 4   5 6 7 8 9   A B C D E
-                //   1 2 2 2  [ X   . . . │ . . . . . │ .   X . . │ . . . . . ]
-                //
-                // in this scenario, the square at position D can be marked as filled in, because all possible
-                // runs that can contain it are of size >= 2.
-
-                let min_length = possible_runs.iter().map(|&r| self.runs[r].length).min().unwrap();
-                if min_length > seq.len() {
-                    println!("  infer_run_assignments: all possible runs for sequence [{}, {}] are of length at least {}; marking additional squares away from field edges as filled in (where applicable)", seq.start, seq.end-1, min_length);
-                }
-                let field = self.get_fields().into_iter()
-                                             .filter(|field| field.contains(&seq.start))
-                                             .next()
-                                             .expect("");
-
-                let clamped_leftmost_start = max(seq.start - min_length + 1, field.start);
-                let clamped_rightmost_end  = min(seq.start + min_length,     field.end);
-
-                let clamped_leftmost_range = clamped_leftmost_start .. (clamped_leftmost_start + min_length);
-                let clamped_rightmost_range = (clamped_rightmost_end - min_length) .. clamped_rightmost_end;
-
-                // fill in from seq.start to clamped_leftmost_range.end
-                //              clamped_rightmost_range.start to seq.end
-                for x in seq.start .. clamped_leftmost_range.end {
-                    if let Some(change) = self.get_square_mut(x).set_status(FilledIn)? {
-                        changes.push(Change::from(change));
+            for (i, seq) in filled_sequences.iter().enumerate().rev() {
+                if (seq.start .. rightmost_seq.end).len() > rightmost_run.length {
+                    let removed = vec_remove_item(&mut possible_runs_map.get_mut(&i).unwrap(), &rightmost_run.index);
+                    if let Some(_) = removed {
+                        println!("    removed the possibility of rightmost run #{} (len {}) being assigned to the sequence at [{},{}]: is more than the length of the rightmost run {} removed from the rightmost sequence at [{},{}]",
+                            rightmost_run.index, rightmost_run.length, seq.start, seq.end-1, rightmost_run.length, rightmost_seq.start, rightmost_seq.end-1);
                     }
                 }
-                for x in clamped_rightmost_range.start .. seq.end {
-                    if let Some(change) = self.get_square_mut(x).set_status(FilledIn)? {
-                        changes.push(Change::from(change));
+            }
+
+            // c) a run cannot appear in sequences to the left of the rightmost sequence on which ONLY previous runs are possible
+            // d) a run cannot appear in sequences to the right of the lefmost sequence on which ONLY following runs are possible
+
+            // -> for each run, see if there are any sequences on which either ONLY previous runs or ONLY following runs are possible.
+            for run_idx in runs_range.start..runs_range.end {
+                let rightmost_seq_wonly_prev_runs = (0..filled_sequences.len()).filter(|&seq_idx| possible_runs_map[&seq_idx].iter().all(|&possible_run_idx| possible_run_idx < run_idx))
+                                                                               .last();
+                let leftmost_seq_wonly_next_runs = (0..filled_sequences.len()).filter(|seq_idx| possible_runs_map[&seq_idx].iter().all(|&possible_run_idx| possible_run_idx > run_idx))
+                                                                              .next();
+
+                // drop this run from the sequences where they can't appear
+                if let Some(rightmost_idx) = rightmost_seq_wonly_prev_runs {
+                    for seq_idx in 0..rightmost_idx {
+                        let removed = vec_remove_item(&mut possible_runs_map.get_mut(&seq_idx).unwrap(), &run_idx);
+                        if let Some(_) = removed {
+                            let run = &self.runs[run_idx];
+                            let seq = &filled_sequences[seq_idx];
+                            let rightmost_seq = &filled_sequences[rightmost_idx];
+                            println!("    removed the possibility of run #{} (len {}) being assigned to the sequence at [{},{}]: cannot appear before sequence [{},{}] on which only earlier runs are possible",
+                                run.index, run.length, seq.start, seq.end-1, rightmost_seq.start, rightmost_seq.end-1);
+                        }
                     }
                 }
-
+                if let Some(leftmost_idx) = leftmost_seq_wonly_next_runs {
+                    for seq_idx in leftmost_idx+1..filled_sequences.len() {
+                        let removed = vec_remove_item(&mut possible_runs_map.get_mut(&seq_idx).unwrap(), &run_idx);
+                        if let Some(_) = removed {
+                            let run = &self.runs[run_idx];
+                            let seq = &filled_sequences[seq_idx];
+                            let leftmost_seq = &filled_sequences[leftmost_idx];
+                            println!("    removed the possibility of run #{} (len {}) being assigned to the sequence at [{},{}]: cannot appear after sequence [{},{}] on which only next runs are possible",
+                                run.index, run.length, seq.start, seq.end-1, leftmost_seq.start, leftmost_seq.end-1);
+                        }
+                    }
+                }
             }
+
+            // now iterate over each sequence and see which runs are still possible:
+            //  - there should be at least 1, otherwise we have an inconsistency somewhere.
+            //  - if there is exactly one, we can assign that run to all squares in the sequence.
+            //  - if there are more than one, we might be able to find out additional information based on their lengths:
+            //      * if all possible runs for a sequence are of the same length as that sequence, then we can delineate it in place.
+            //      * if all possible runs for a sequence are of a certain minimal length, we can 'bounce' that length against the edges
+            //          of its containing field to discover additional filled squares.
+
+            for (&seq_idx, possible_runs) in &possible_runs_map
+            {
+                let seq = &filled_sequences[seq_idx];
+                if possible_runs.len() == 0 {
+                    panic!("Inconsistency: no run found that can encompass the sequence of filled squares [{}, {}] in {} row {}", seq.start, seq.end-1, self.direction, self.index);
+                }
+                else if possible_runs.len() == 1 {
+                    // only one run could possibly encompass this sequence; assign it to each square
+                    let run = &self.runs[possible_runs[0]];
+                    println!("    found singular run assignment for sequence [{}, {}]: run {} (len {})", seq.start, seq.end-1, run.index, run.length);
+
+                    for x in seq.start..seq.end {
+                        if let Some(change) = self.get_square_mut(x).assign_run(run)? {
+                            changes.push(Change::from(change));
+                        }
+                    }
+
+                    // on the next iteration, update_possible_run_placements will pick up on the fact that this square
+                    // got a run assigned to it, and update its possible placements accordingly.
+                }
+                else {
+                    // ok, we couldn't identify an exact run; see if there's anything else we can determine with the
+                    // information we have.
+
+                    // if all possible runs for this sequence are of the same length that the sequence already has,
+                    // then we can at least confirm its placement despite not knowing exactly which one it is yet.
+                    if possible_runs.iter().all(|&r| self.runs[r].length == seq.len()) {
+                        //println!("all possible runs that might contain the sequence [{}, {}] are of the same length: {}", seq.start, seq.end-1, seq.len());
+                        // pick any run (doesn't matter which one, they're all the same length), pretend it will be placed
+                        // at this sequence's position, and cross out the squares directly in front of and behind it.
+                        changes.extend(self.runs[possible_runs[0]].delineate_at(seq.start)?);
+                    }
+
+                    // if all possible runs are of a certain minimum length, we can 'bounce' that length
+                    // against the edges of the containing field to find additional squares to be filled in.
+                    //
+                    // example:
+                    //              0 1 2 3 4   5 6 7 8 9   A B C D E
+                    //   1 2 2 2  [ X   . . . │ . . . . . │ .   X . . │ . . . . . ]
+                    //
+                    // in this scenario, the square at position D can be marked as filled in, because all possible
+                    // runs that can contain it are of size >= 2.
+
+                    let min_length = possible_runs.iter().map(|&r| self.runs[r].length).min().unwrap();
+                    if min_length > seq.len() {
+                        println!("    all possible runs for sequence [{}, {}] are of length at least {}; marking additional squares away from field edges as filled in (where applicable)", seq.start, seq.end-1, min_length);
+                    }
+                    let field = self.get_fields().into_iter()
+                                                 .filter(|field| field.contains(&seq.start))
+                                                 .next()
+                                                 .expect("");
+
+                    let clamped_leftmost_start = max(seq.start - min_length + 1, field.start);
+                    let clamped_rightmost_end  = min(seq.start + min_length,     field.end);
+
+                    let clamped_leftmost_range = clamped_leftmost_start .. (clamped_leftmost_start + min_length);
+                    let clamped_rightmost_range = (clamped_rightmost_end - min_length) .. clamped_rightmost_end;
+
+                    // fill in from seq.start to clamped_leftmost_range.end
+                    //              clamped_rightmost_range.start to seq.end
+                    for x in seq.start .. clamped_leftmost_range.end {
+                        if let Some(change) = self.get_square_mut(x).set_status(FilledIn)? {
+                            changes.push(Change::from(change));
+                        }
+                    }
+                    for x in clamped_rightmost_range.start .. seq.end {
+                        if let Some(change) = self.get_square_mut(x).set_status(FilledIn)? {
+                            changes.push(Change::from(change));
+                        }
+                    }
+
+                }
+            }
+
         }
-
         Ok(changes)
     }
 
@@ -317,8 +502,9 @@ impl Row {
         // in the sequence. also, if the length of the sequence is the same as that of the run
         // it was assigned, then the run is complete.
         let mut changes = Vec::<Change>::new();
-        let filled_sequences = self._ranges_of(|s| s.get_status() == FilledIn)
-                                   .into_iter().collect::<Vec<_>>();
+        let filled_sequences = self._ranges_of_squares(|sq, _| sq.get_status() == FilledIn)
+                                   .into_iter()
+                                   .collect::<Vec<_>>();
 
         for seq in filled_sequences
         {

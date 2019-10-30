@@ -71,8 +71,8 @@ impl Row {
             completed: false,
         }
     }
-    fn _ranges_of<P>(&self, pred: P) -> Vec<Range<usize>>
-        where P: Fn(Ref<Square>) -> bool
+    fn _ranges_of_squares<P>(&self, pred: P) -> Vec<Range<usize>>
+        where P: Fn(Ref<Square>, usize) -> bool
     {
         // given a predicate on a square, returns a set of mutually exclusive ranges within this row 
         // for which the predicate holds for all squares in that range.
@@ -80,7 +80,7 @@ impl Row {
         let mut x: usize = 0;
         while x < self.length {
             // skip past squares for which the predicate does not hold
-            while x < self.length && !pred(self.get_square(x)) {
+            while x < self.length && !pred(self.get_square(x), x) {
                 x += 1;
             }
             if x >= self.length { break; }
@@ -88,7 +88,7 @@ impl Row {
             // skip past squares for which the predicate does hold
             let range_start = x;
             x += 1; // we already tested the predicate on x at the end of the previous loop
-            while x < self.length && pred(self.get_square(x)) {
+            while x < self.length && pred(self.get_square(x), x) {
                 x += 1;
             }
             let range_end = x;
@@ -98,9 +98,37 @@ impl Row {
         }
         result
     }
+    fn _ranges_of_runs<P>(&self, pred: P) -> Vec<Range<usize>>
+        where P: Fn(&Run) -> bool
+    {
+        // given a predicate on a run, returns a set of mutually exclusive ranges
+        // of contiguous run indices for which the predicate holds.
+        let mut result = Vec::<Range<usize>>::new();
+        let mut x: usize = 0;
+        while x < self.runs.len() {
+            // skip past squares for which the predicate does not hold
+            while x < self.runs.len() && !pred(&self.runs[x]) {
+                x += 1;
+            }
+            if x >= self.runs.len() { break; }
+
+            // skip past runs for which the predicate does hold
+            let range_start = x;
+            x += 1; // we already tested the predicate on x at the end of the previous loop
+            while x < self.runs.len() && pred(&self.runs[x]) {
+                x += 1;
+            }
+            let range_end = x;
+            result.push(range_start..range_end);
+
+            x += 1;
+        }
+        result
+    }
+
     pub fn get_fields(&self) -> Vec<Range<usize>> {
         // returns the set of ranges in this row of contiguous squares that are not crossed out
-        self._ranges_of(|sq| sq.get_status() != CrossedOut)
+        self._ranges_of_squares(|sq, _| sq.get_status() != CrossedOut)
     }
 
     pub fn is_completed(&self) -> bool {
@@ -196,6 +224,11 @@ impl Run {
     }
     pub fn is_completed(&self) -> bool {
         self.completed
+    }
+    pub fn completed_placement(&self) -> Range<usize> {
+        assert!(self.is_completed());
+        assert!(self.possible_placements.len() == 1);
+        self.possible_placements[0].clone()
     }
     pub fn to_colored_string(&self) -> ANSIString {
         let style = match self.completed {

@@ -318,7 +318,7 @@ impl Puzzle {
                  columnwise_separator: &str,
                  subdivision: Option<usize>,
                  content_parts: &Vec<String>,
-                 emit_color: bool)
+                 _emit_color: bool)
         -> String
     {
         let mut result = format!("{} {}", prefix, left_delim);
