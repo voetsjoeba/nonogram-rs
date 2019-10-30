@@ -326,6 +326,7 @@ impl Row {
 
             // for each sequence of filled squares, determine the set of possible runs that could
             // be assigned to it according to the current information.
+            // TODO: hashmap isn't necessary here, could also just store this as a Vec<Vec<usize>>
             let mut possible_runs_map = HashMap::<usize, Vec<usize>>::new(); // maps sequence index to list of possible run indices
             for (i, seq) in filled_sequences.iter().enumerate() {
                 let possible_runs = self.possible_runs_for_sequence(seq);
@@ -361,8 +362,6 @@ impl Row {
                             leftmost_run.index, leftmost_run.length, seq.start, seq.end-1, leftmost_run.length, leftmost_seq.start, leftmost_seq.end-1);
                     }
                 }
-            }
-            for (i, seq) in filled_sequences.iter().enumerate().rev() {
                 if (seq.start .. rightmost_seq.end).len() > rightmost_run.length {
                     let removed = vec_remove_item(&mut possible_runs_map.get_mut(&i).unwrap(), &rightmost_run.index);
                     if let Some(_) = removed {
