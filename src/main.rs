@@ -14,13 +14,16 @@ mod util;
 mod puzzle;
 mod grid;
 mod row;
+mod ui;
 
 use self::util::{is_a_tty, Direction};
 use self::puzzle::Puzzle;
+use self::ui::ui_main;
 use self::grid::{Change, StatusChange, RunChange, SquareStatus};
 
 #[derive(Debug)]
 pub struct Args {
+    ui: bool,
     input_file: String,
     emit_color: bool,
     visual_groups: Option<usize>,
@@ -105,6 +108,9 @@ fn main() {
                              .required(false)
                              .possible_values(&["yes", "no", "auto"])
                              .default_value("auto"))
+                   .arg(Arg::with_name("ui")
+                             .long("ui")
+                             .takes_value(false))
                    .arg(Arg::with_name("groups")
                              .help("row group sizes when outputting puzzle visually")
                              .short("g")
@@ -129,6 +135,7 @@ Run assignment actions will automatically fill in squares prior to assigning a r
                    .get_matches();
 
     let args: Args = Args {
+        ui: args.is_present("ui"),
         input_file: args.value_of("input_file").unwrap().to_string(),
         emit_color: match args.value_of("color") {
             Some("yes")  => true,
@@ -154,7 +161,14 @@ Run assignment actions will automatically fill in squares prior to assigning a r
     let doc: &Yaml = &docs[0];
 
     let mut puzzle = Puzzle::from_yaml(doc);
-    if let Err(x) = puzzle.solve(&args) {
-        println!("\nFailed to solve puzzle!\n  {}", x);
+    if args.ui {
+        if let Err(x) = puzzle.solve(&args) {
+            println!("\nFailed to solve puzzle!\n  {}", x);
+        }
+        ui_main(puzzle, &args);
+    } else {
+        if let Err(x) = puzzle.solve(&args) {
+            println!("\nFailed to solve puzzle!\n  {}", x);
+        }
     }
 }

@@ -68,11 +68,11 @@ impl Puzzle {
         }
     }
 
-    fn get_square(&self, x: usize, y: usize) -> Ref<Square> {
+    pub fn get_square(&self, x: usize, y: usize) -> Ref<Square> {
         let grid = self.grid.borrow();
         Ref::map(grid, |g| g.get_square(x, y))
     }
-    fn get_square_mut(&self, x: usize, y: usize) -> RefMut<Square> {
+    pub fn get_square_mut(&self, x: usize, y: usize) -> RefMut<Square> {
         let grid = self.grid.borrow_mut();
         RefMut::map(grid, |g| g.get_square_mut(x, y))
     }
