@@ -2,6 +2,7 @@
 use super::puzzle::{Puzzle, Solver};
 use super::grid::SquareStatus;
 use super::row::Row;
+use super::util::{Direction::*};
 use super::Args;
 
 use std::convert::TryFrom;
@@ -66,6 +67,7 @@ struct PuzzleViewSettings {
     pub outline_line_thickness: f64, // line width for the grid border
 
     pub run_text_size: u32,
+    pub run_text_color_hl: Color,
     pub run_text_color_complete: Color,
     pub run_text_color_incomplete: Color,
 
@@ -90,6 +92,8 @@ impl PuzzleViewSettings {
             outline_line_thickness: 3.0,
 
             run_text_size: 18,
+            //run_text_color_hl: [236.0/255.0, 153.0/255.0, 23.0/255.0, 1.0],
+            run_text_color_hl: [1.0, 0.0, 0.0, 1.0],
             run_text_color_complete: [0.7, 0.7, 0.7, 1.0],
             run_text_color_incomplete: [0.0, 0.0, 0.0, 1.0],
         }
@@ -134,19 +138,24 @@ impl PuzzleView {
     }
     pub fn draw_h_runs<G: Graphics, C>(&self, row: &Row,
                                               draw_width: f64,
+                                              highlighted_idx: Option<usize>,
                                               c: &Context,
                                               glyphs: &mut C,
                                               g: &mut G)
         where C: CharacterCache<Texture = G::Texture>
     {
         let square_size = self.settings.square_size;
-        for (i,run) in row.runs.iter().rev().enumerate() {
-            let text_style = Text::new_color(match run.is_completed() {
+        for (n,run) in row.runs.iter().rev().enumerate() {
+            let mut text_color = match run.is_completed() {
                 true  => self.settings.run_text_color_complete,
                 false => self.settings.run_text_color_incomplete,
-            }, self.settings.run_text_size);
+            };
+            if let Some(h_idx) = highlighted_idx {
+                if run.index == h_idx { text_color = self.settings.run_text_color_hl; }
+            }
+            let text_style = Text::new_color(text_color, self.settings.run_text_size);
 
-            let mut x = draw_width - square_size/4.0 - ((i+1) as f64) * square_size; // subtract a little extra for visual margin
+            let mut x = draw_width - square_size/4.0 - ((n+1) as f64) * square_size; // subtract a little extra for visual margin
             let y = ((row.index + 1) as f64) * square_size; // text y position is on bottom left, not top left
             if run.length < 10 { x += square_size/4.0; } // move single-char numbers over a bit
             let c = c.trans(x, y-(square_size/6.0)); // move text up a little bit for visual
@@ -156,6 +165,7 @@ impl PuzzleView {
     }
     pub fn draw_v_runs<G: Graphics, C>(&self, row: &Row,
                                               draw_height: f64,
+                                              highlighted_idx: Option<usize>,
                                               c: &Context,
                                               glyphs: &mut C,
                                               g: &mut G)
@@ -163,10 +173,14 @@ impl PuzzleView {
     {
         let square_size = self.settings.square_size;
         for (i,run) in row.runs.iter().rev().enumerate() {
-            let text_style = Text::new_color(match run.is_completed() {
+            let mut text_color = match run.is_completed() {
                 true  => self.settings.run_text_color_complete,
                 false => self.settings.run_text_color_incomplete,
-            }, self.settings.run_text_size);
+            };
+            if let Some(h_idx) = highlighted_idx {
+                if run.index == h_idx { text_color = self.settings.run_text_color_hl; }
+            }
+            let text_style = Text::new_color(text_color, self.settings.run_text_size);
 
             let mut x = (row.index as f64) * square_size;
             let y = draw_height - square_size/4.0 - (i as f64) * square_size;
@@ -205,12 +219,22 @@ impl PuzzleView {
                 line_style.draw([square_size-margin, margin, margin, square_size-margin], &c.draw_state, c.transform, g);
             }
             SquareStatus::Unknown    => {
-                let fill_style = Rectangle::new(match is_selected {
+                let fill_style = Rectangle::new(match is_highlighted {
                     true  => self.settings.unknown_sq_fill_color_hl,
                     false => self.settings.unknown_sq_fill_color,
                 });
                 fill_style.draw(square_rect, &c.draw_state, c.transform, g);
             }
+        }
+
+        // if the square has known vertical or horizontal runs, draw a small indicator line to signify this
+        if let Some(_) = square.get_run_index(Horizontal) {
+            let line_style = Line::new([0.0, 0.0, 0.0, 1.0], 0.5);
+            line_style.draw([0.0, square_size/2.0, square_size/2.0 * 0.8, square_size/2.0], &c.draw_state, c.transform, g);
+        }
+        if let Some(_) = square.get_run_index(Vertical) {
+            let line_style = Line::new([0.0, 0.0, 0.0, 1.0], 0.5);
+            line_style.draw([square_size/2.0, 0.0, square_size/2.0, square_size/2.0 * 0.8], &c.draw_state, c.transform, g);
         }
     }
     pub fn draw<G: Graphics, C>(&self, controller: &PuzzleController,
@@ -284,13 +308,25 @@ impl PuzzleView {
             }
 
             // draw run numbers
-            for row in 0..puzzle.height() {
-                let row = &puzzle.rows[row];
-                self.draw_h_runs(row, runarea_drawwidth, &c.trans(0.0, grid_yoffset), glyphs, g);
+            for row_idx in 0..puzzle.height() {
+                let row = &puzzle.rows[row_idx];
+                let mut highlighted_run_idx: Option<usize> = None;
+                if let Some([hx,hy]) = highlighted_sq_pos {
+                    if row_idx == hy {
+                        highlighted_run_idx = puzzle.get_square(hx, hy).get_run_index(row.direction);
+                    }
+                }
+                self.draw_h_runs(row, runarea_drawwidth, highlighted_run_idx, &c.trans(0.0, grid_yoffset), glyphs, g);
             }
-            for col in 0..puzzle.width() {
-                let row = &puzzle.cols[col];
-                self.draw_v_runs(row, runarea_drawheight, &c.trans(grid_xoffset, 0.0), glyphs, g);
+            for col_idx in 0..puzzle.width() {
+                let col = &puzzle.cols[col_idx];
+                let mut highlighted_run_idx: Option<usize> = None;
+                if let Some([hx,hy]) = highlighted_sq_pos {
+                    if col_idx == hx {
+                        highlighted_run_idx = puzzle.get_square(hx, hy).get_run_index(col.direction);
+                    }
+                }
+                self.draw_v_runs(col, runarea_drawheight, highlighted_run_idx, &c.trans(grid_xoffset, 0.0), glyphs, g);
             }
 
             // draw grid
@@ -322,7 +358,10 @@ impl PuzzleView {
                     style.draw(line_coords, &c.draw_state, c.transform, g);
                 }
             }
-        }
+        } // end c.trans()
+
+        // draw some progress and state information
+
     }
 }
 
