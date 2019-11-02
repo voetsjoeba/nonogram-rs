@@ -171,12 +171,10 @@ impl Puzzle {
         let mut square = self.get_square_mut(change.get_col(), change.get_row());
         square.apply_change(change)
     }
-
     pub fn is_completed(&self) -> bool {
         self.rows.iter().all(|r| r.is_completed()) &&
             self.cols.iter().all(|c| c.is_completed())
     }
-
 }
 
 impl Puzzle {

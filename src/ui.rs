@@ -1,7 +1,7 @@
 // vim: set ai et ts=4 sts=4 sw=4:
 use super::puzzle::{Puzzle, Solver};
 use super::grid::SquareStatus;
-use super::row::Row;
+use super::row::{Row, DirectionalSequence};
 use super::util::{Direction::*};
 use super::Args;
 
@@ -66,10 +66,14 @@ struct PuzzleViewSettings {
     pub subdivision_line_thickness: f64, // line width for subdivision separators
     pub outline_line_thickness: f64, // line width for the grid border
 
-    pub run_text_size: u32,
+    pub run_text_font_size: u32,
     pub run_text_color_hl: Color,
     pub run_text_color_complete: Color,
     pub run_text_color_incomplete: Color,
+
+    pub info_text_font_size: u32,
+    pub info_text_color: Color,
+    pub info_text_line_height: f64,
 
 }
 impl PuzzleViewSettings {
@@ -91,11 +95,15 @@ impl PuzzleViewSettings {
             subdivision_line_thickness: 2.0,
             outline_line_thickness: 3.0,
 
-            run_text_size: 18,
+            run_text_font_size: 18,
             //run_text_color_hl: [236.0/255.0, 153.0/255.0, 23.0/255.0, 1.0],
             run_text_color_hl: [1.0, 0.0, 0.0, 1.0],
             run_text_color_complete: [0.7, 0.7, 0.7, 1.0],
             run_text_color_incomplete: [0.0, 0.0, 0.0, 1.0],
+
+            info_text_font_size: 16,
+            info_text_color: [0.0, 0.0, 0.0, 1.0],
+            info_text_line_height: 20.0,
         }
     }
 }
@@ -153,7 +161,7 @@ impl PuzzleView {
             if let Some(h_idx) = highlighted_idx {
                 if run.index == h_idx { text_color = self.settings.run_text_color_hl; }
             }
-            let text_style = Text::new_color(text_color, self.settings.run_text_size);
+            let text_style = Text::new_color(text_color, self.settings.run_text_font_size);
 
             let mut x = draw_width - square_size/4.0 - ((n+1) as f64) * square_size; // subtract a little extra for visual margin
             let y = ((row.index + 1) as f64) * square_size; // text y position is on bottom left, not top left
@@ -180,7 +188,7 @@ impl PuzzleView {
             if let Some(h_idx) = highlighted_idx {
                 if run.index == h_idx { text_color = self.settings.run_text_color_hl; }
             }
-            let text_style = Text::new_color(text_color, self.settings.run_text_size);
+            let text_style = Text::new_color(text_color, self.settings.run_text_font_size);
 
             let mut x = (row.index as f64) * square_size;
             let y = draw_height - square_size/4.0 - (i as f64) * square_size;
@@ -276,91 +284,108 @@ impl PuzzleView {
         // note:
         // line [x1, x2, y1, y2],
         //  => radius is HALF the line thickness!
+        let c = c.trans(settings.position[0], settings.position[1]);
+
+        let subdivision_size = settings.subdivision_size.unwrap_or(0usize);
+        let square_size = settings.square_size;
+        let puzzle = &controller.solver.puzzle;
+
+        // rectangles are specified by: [x, y, w, h]
+        // lines are specified by: [x1, y1, x2, y2]
+        let num_h_runs = puzzle.rows.iter().map(|row| row.runs.len()).max().unwrap();
+        let num_v_runs = puzzle.cols.iter().map(|col| col.runs.len()).max().unwrap();
+        let runarea_drawwidth = (num_h_runs as f64) * square_size; // width of the runs block to the left of the grid
+        let runarea_drawheight = (num_v_runs as f64) * square_size; // width of the runs block to the top of the grid
+
+        let grid_xoffset = runarea_drawwidth;
+        let grid_yoffset = runarea_drawheight;
+        let grid_drawwidth  = (puzzle.width() as f64) * square_size;
+        let grid_drawheight = (puzzle.height() as f64) * square_size;
+
+        let highlighted_sq_pos = self.mouse_pos_to_square(&controller.solver.puzzle, controller.cursor_pos);
+
+        // draw squares
+        for y in 0..puzzle.height() {
+            for x in 0..puzzle.width() {
+                let is_highlighted = highlighted_sq_pos.map(|[hx, hy]| hx == x && hy == y).unwrap_or(false);
+                let c = c.trans(grid_xoffset + (x as f64)*square_size,
+                                grid_yoffset + (y as f64)*square_size);
+                self.draw_square(x, y, is_highlighted, controller, &c, g);
+            }
+        }
+
+        // draw run numbers
+        for row_idx in 0..puzzle.height() {
+            let row = &puzzle.rows[row_idx];
+            let mut highlighted_run_idx: Option<usize> = None;
+            if let Some([hx,hy]) = highlighted_sq_pos {
+                if row_idx == hy {
+                    highlighted_run_idx = puzzle.get_square(hx, hy).get_run_index(row.direction);
+                }
+            }
+            self.draw_h_runs(row, runarea_drawwidth, highlighted_run_idx, &c.trans(0.0, grid_yoffset), glyphs, g);
+        }
+        for col_idx in 0..puzzle.width() {
+            let col = &puzzle.cols[col_idx];
+            let mut highlighted_run_idx: Option<usize> = None;
+            if let Some([hx,hy]) = highlighted_sq_pos {
+                if col_idx == hx {
+                    highlighted_run_idx = puzzle.get_square(hx, hy).get_run_index(col.direction);
+                }
+            }
+            self.draw_v_runs(col, runarea_drawheight, highlighted_run_idx, &c.trans(grid_xoffset, 0.0), glyphs, g);
+        }
+
+        // draw grid
         {
-            let c = c.trans(settings.position[0], settings.position[1]);
+            let square_line_style = Line::new(line_color, settings.square_line_thickness/2.0); // line radius = HALF of line thickness!
+            let subdivision_line_style = Line::new(line_color, settings.subdivision_line_thickness/2.0);
+            let grid_outline_style = Line::new(line_color, settings.outline_line_thickness/2.0);
 
-            let subdivision_size = settings.subdivision_size.unwrap_or(0usize);
-            let square_size = settings.square_size;
-            let puzzle = &controller.solver.puzzle;
+            for i in 0..puzzle.height()+1 { // +1 for extra line to cleanly close the grid
+                let y = runarea_drawheight + (i as f64) * square_size;
+                let line_coords = [0.0, y, runarea_drawwidth + grid_drawwidth, y];
 
-            // rectangles are specified by: [x, y, w, h]
-            // lines are specified by: [x1, y1, x2, y2]
-            let num_h_runs = puzzle.rows.iter().map(|row| row.runs.len()).max().unwrap();
-            let num_v_runs = puzzle.cols.iter().map(|col| col.runs.len()).max().unwrap();
-            let runarea_drawwidth = (num_h_runs as f64) * square_size; // width of the runs block to the left of the grid
-            let runarea_drawheight = (num_v_runs as f64) * square_size; // width of the runs block to the top of the grid
-
-            let grid_xoffset = runarea_drawwidth;
-            let grid_yoffset = runarea_drawheight;
-            let grid_drawwidth  = (puzzle.width() as f64) * square_size;
-            let grid_drawheight = (puzzle.height() as f64) * square_size;
-
-            let highlighted_sq_pos = self.mouse_pos_to_square(&controller.solver.puzzle, controller.cursor_pos);
-
-            // draw squares
-            for y in 0..puzzle.height() {
-                for x in 0..puzzle.width() {
-                    let is_highlighted = highlighted_sq_pos.map(|[hx, hy]| hx == x && hy == y).unwrap_or(false);
-                    let c = c.trans(grid_xoffset + (x as f64)*square_size,
-                                    grid_yoffset + (y as f64)*square_size);
-                    self.draw_square(x, y, is_highlighted, controller, &c, g);
-                }
+                let style = match i {
+                    a if a == 0 || a == puzzle.height()                     => &grid_outline_style,
+                    a if subdivision_size > 0 && a % subdivision_size == 0  => &subdivision_line_style,
+                    _                                                       => &square_line_style,
+                };
+                style.draw(line_coords, &c.draw_state, c.transform, g);
             }
+            for i in 0..puzzle.width()+1 { // +1 for extra line to cleanly close the grid
+                let x = runarea_drawwidth + (i as f64) * square_size;
+                let line_coords = [x, 0.0, x, runarea_drawheight + grid_drawheight];
 
-            // draw run numbers
-            for row_idx in 0..puzzle.height() {
-                let row = &puzzle.rows[row_idx];
-                let mut highlighted_run_idx: Option<usize> = None;
-                if let Some([hx,hy]) = highlighted_sq_pos {
-                    if row_idx == hy {
-                        highlighted_run_idx = puzzle.get_square(hx, hy).get_run_index(row.direction);
-                    }
-                }
-                self.draw_h_runs(row, runarea_drawwidth, highlighted_run_idx, &c.trans(0.0, grid_yoffset), glyphs, g);
+                let style = match i {
+                    a if a == 0 || a == puzzle.width()                      => &grid_outline_style,
+                    a if subdivision_size > 0 && a % subdivision_size == 0  => &subdivision_line_style,
+                    _                                                       => &square_line_style,
+                };
+                style.draw(line_coords, &c.draw_state, c.transform, g);
             }
-            for col_idx in 0..puzzle.width() {
-                let col = &puzzle.cols[col_idx];
-                let mut highlighted_run_idx: Option<usize> = None;
-                if let Some([hx,hy]) = highlighted_sq_pos {
-                    if col_idx == hx {
-                        highlighted_run_idx = puzzle.get_square(hx, hy).get_run_index(col.direction);
-                    }
-                }
-                self.draw_v_runs(col, runarea_drawheight, highlighted_run_idx, &c.trans(grid_xoffset, 0.0), glyphs, g);
-            }
-
-            // draw grid
-            {
-                let square_line_style = Line::new(line_color, settings.square_line_thickness/2.0); // line radius = HALF of line thickness!
-                let subdivision_line_style = Line::new(line_color, settings.subdivision_line_thickness/2.0);
-                let grid_outline_style = Line::new(line_color, settings.outline_line_thickness/2.0);
-
-                for i in 0..puzzle.height()+1 { // +1 for extra line to cleanly close the grid
-                    let y = runarea_drawheight + (i as f64) * square_size;
-                    let line_coords = [0.0, y, runarea_drawwidth + grid_drawwidth, y];
-
-                    let style = match i {
-                        a if a == 0 || a == puzzle.height()                     => &grid_outline_style,
-                        a if subdivision_size > 0 && a % subdivision_size == 0  => &subdivision_line_style,
-                        _                                                       => &square_line_style,
-                    };
-                    style.draw(line_coords, &c.draw_state, c.transform, g);
-                }
-                for i in 0..puzzle.width()+1 { // +1 for extra line to cleanly close the grid
-                    let x = runarea_drawwidth + (i as f64) * square_size;
-                    let line_coords = [x, 0.0, x, runarea_drawheight + grid_drawheight];
-
-                    let style = match i {
-                        a if a == 0 || a == puzzle.width()                      => &grid_outline_style,
-                        a if subdivision_size > 0 && a % subdivision_size == 0  => &subdivision_line_style,
-                        _                                                       => &square_line_style,
-                    };
-                    style.draw(line_coords, &c.draw_state, c.transform, g);
-                }
-            }
-        } // end c.trans()
+        }
 
         // draw some progress and state information
+        {
+            let c = c.trans(grid_xoffset + grid_drawwidth, 0.0);
+            let c = c.trans(square_size, 0.0); // some extra spacing
+            let text_style = Text::new_color([0.0, 0.0, 0.0, 1.0], settings.info_text_font_size);
+
+            let num_squares_total = puzzle.height() * puzzle.width();
+            let num_squares_known = puzzle.rows.iter().fold(0, |acc, row| acc + (0..row.length).filter(|&pos| row.get_square(pos).get_status() != SquareStatus::Unknown)
+                                                                                               .count());
+            let state_text = format!(
+r"Completion: {}/{}
+Iterations: {}
+
+Press S to single-step the solver.", num_squares_known, num_squares_total,
+                                     controller.solver.iterations);
+            for (i, line) in state_text.split("\n").enumerate() {
+                let c = c.trans(0.0, (i as f64) * settings.info_text_line_height);
+                text_style.draw(line, glyphs, &c.draw_state, c.transform, g).ok().unwrap();
+            }
+        }
 
     }
 }
