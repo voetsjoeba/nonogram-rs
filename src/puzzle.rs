@@ -13,6 +13,97 @@ use super::grid::{Grid, Square, SquareStatus, Change, Changes, Error, HasGridLoc
 use super::util::{ralign, lalign_colored, ralign_joined_coloreds, Direction, Direction::*, is_a_tty};
 use super::row::{Row, Run};
 
+pub struct Solver {
+    pub puzzle: Puzzle,
+    pub queue: VecDeque<(Direction, usize)>,
+    pub iterations: usize,
+    pub max_iterations: usize,
+}
+impl Solver {
+    pub fn new(puzzle: Puzzle) -> Self
+    {
+        let mut queue = VecDeque::<(Direction, usize)>::new();
+        queue.extend(puzzle.rows.iter().map(|r| (r.direction, r.index)));
+        queue.extend(puzzle.cols.iter().map(|c| (c.direction, c.index)));
+
+        Self {
+            puzzle,
+            queue,
+            iterations: 0,
+            max_iterations: 100_000,
+        }
+    }
+    pub fn apply_and_feed_change(&mut self, change: &Change) {
+        self.puzzle.apply_change((*change).clone()).expect("");
+        self._refeed_change(change);
+    }
+    fn _refeed_change(&mut self, change: &Change) {
+        // takes a change and feeds the row and column that it affected back into the
+        // queue.
+        let (row, col) = (change.get_row(), change.get_col());
+        let h_value = (self.puzzle.rows[row].direction, self.puzzle.rows[row].index);
+        let v_value = (self.puzzle.cols[col].direction, self.puzzle.cols[col].index);
+        if !self.queue.contains(&v_value) { self.queue.push_back(v_value); }
+        if !self.queue.contains(&h_value) { self.queue.push_back(h_value); }
+    }
+    fn _iter_next(&mut self) -> Option<<Solver as Iterator>::Item>
+    {
+        macro_rules! changes_or_return {
+            ($exp:expr) => {{
+                match $exp {
+                    Ok(changes) => changes,
+                    Err(e)      => return Some(Err(e)),
+                }
+            }}
+        };
+        // iterate over the queue and run solver logic on them until some changes are found, and return them;
+        // if we're out of rows to investigate, return None.
+        while let Some((d,i)) = self.queue.pop_front()
+        {
+            self.iterations += 1;
+            if self.iterations >= self.max_iterations {
+                panic!("max iterations exceeded, aborting");
+            }
+
+            let row = match d {
+                Horizontal => &mut self.puzzle.rows[i],
+                Vertical   => &mut self.puzzle.cols[i],
+            };
+
+            // before doing any further work, check whether this row is already_completed
+            // (includes handling of trivial cases like empty rows etc)
+            let mut changes = Vec::<Change>::new();
+            changes.extend(changes_or_return!(row.check_completed_runs()));
+            changes.extend(changes_or_return!(row.check_completed()));
+
+            if !row.is_completed() {
+                row.update_possible_run_placements();
+                changes.extend(changes_or_return!(row.infer_run_assignments()));
+                changes.extend(changes_or_return!(row.infer_status_assignments()));
+            }
+
+            if changes.len() > 0 {
+                // found some changes in this row; feed the affected rows and columns
+                // back into the queue, and return the changes made.
+                for change in &changes {
+                    self._refeed_change(change);
+                }
+                return Some(Ok((d, i, changes)));
+            } else {
+                // no changes made, try next row in the queue.
+            }
+        }
+        None // out of actions
+    }
+}
+impl Iterator for Solver {
+    type Item = Result<(Direction, usize, Changes), Error>; // row direction, index and list of changes applied in this iteration, or an error indicating a problem
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self._iter_next()
+    }
+}
+
 #[derive(Debug)]
 pub struct Puzzle {
     pub rows: Vec<Row>,
@@ -86,118 +177,10 @@ impl Puzzle {
             self.cols.iter().all(|c| c.is_completed())
     }
 
-    pub fn solve(&mut self, args: &Args) -> Result<(), Error>
-    {
-        // keep a queue of rows to be looked at, and run the individual solvers on each
-        // of them in sequence until there are none left in the queue. whenever a change
-        // is made to a square in the grid, those rows are added back into the queue
-        // for evaluation on the next run. completed runs are removed from the queue.
-        println!("starting state:");
-        println!("\n{}", self._fmt(args.visual_groups, args.emit_color));
-
-        let mut queue = VecDeque::<(Direction, usize)>::new();
-        queue.extend(self.rows.iter().map(|r| (r.direction, r.index)));
-        queue.extend(self.cols.iter().map(|c| (c.direction, c.index)));
-
-        let mut on_stall_actions_applied = false;
-
-        macro_rules! refeed_change {
-            // takes a change and feeds the row and column that it affected back into the
-            // queue.
-            ($change:expr) => {{
-                let (row, col) = ($change.get_row(), $change.get_col());
-                let h_value = (self.rows[row].direction, self.rows[row].index);
-                let v_value = (self.cols[col].direction, self.cols[col].index);
-                if !queue.contains(&v_value) { queue.push_back(v_value); }
-                if !queue.contains(&h_value) { queue.push_back(h_value); }
-            }}
-        }
-
-        let mut cur_iteration = 0usize;
-        let max_iterations = 100000usize;
-        loop
-        {
-            while let Some((d,i)) = queue.pop_front()
-            {
-                cur_iteration += 1;
-                if cur_iteration >= max_iterations {
-                    panic!("max iterations exceeded, aborting");
-                }
-
-                println!("starting solvers on {} row {}", d, i);
-                let mut changes = Vec::<Change>::new();
-                {
-                    let row = match d {
-                        Horizontal => &mut self.rows[i],
-                        Vertical   => &mut self.cols[i],
-                    };
-
-                    // before doing any further work, check whether this row is already_completed
-                    // (includes handling of trivial cases like empty rows etc)
-                    changes.extend(row.check_completed_runs()?);
-                    changes.extend(row.check_completed()?);
-
-                    if !row.is_completed() {
-                        row.update_possible_run_placements();
-                        changes.extend(row.infer_run_assignments()?);
-                        changes.extend(row.infer_status_assignments()?);
-                    }
-                }
-
-                if changes.len() == 0 {
-                    println!("finished solvers on {} row {}; no changes", d, i);
-                }
-                else {
-                    // we made changes to one or more squares in the grid; for each square that was affected,
-                    // add the horizontal and vertical rows that cross it back into the queue for re-evaluation
-                    println!("finished solvers on {} row {}; changes in this iteration:", d, i);
-                    for change in &changes {
-                        println!("  {}", change);
-                        refeed_change!(change);
-                    }
-
-                    println!("\n{}", self._fmt(args.visual_groups, args.emit_color));
-                    println!("--------------------------------------");
-                }
-                println!("");
-
-            } // end while
-
-            println!("final state:");
-            println!("\n{}", self._fmt(args.visual_groups, args.emit_color));
-
-            if self.is_completed() {
-                println!("puzzle solved! ({} iterations)", cur_iteration);
-                break; // break out of outer loop
-            }
-
-            println!("puzzle partially solved, out of actions ({} iterations).", cur_iteration);
-
-            // if the user gave us some actions to apply on a stall, apply those now and resume
-            // looping; otherwise, report failure to solve and bail out.
-            if args.actions_on_stall.len() > 0 && !on_stall_actions_applied {
-                println!("\napplying user-supplied actions on stall:");
-                for change in &args.actions_on_stall {
-                    println!("  {}", change);
-                    self.apply_change((*change).clone()).expect("");
-                    refeed_change!(change);
-                }
-                on_stall_actions_applied = true;
-
-                println!("resuming solver loop\n");
-                continue;
-            }
-            self.dump_state();
-            break;
-        } // end loop
-
-        Ok(())
-    } // end solve
-
 }
 
 impl Puzzle {
-    fn dump_state(&self) {
+    pub fn dump_state(&self) {
         println!("run possible placements:");
         for row in self.rows.iter().chain(self.cols.iter()) {
             if row.is_trivially_empty() { continue; }
@@ -228,7 +211,7 @@ impl Puzzle {
     }
 
     // helper functions for Puzzle::fmt
-    fn _fmt(&self, subdivision: Option<usize>, emit_color: bool)
+    pub fn _fmt(&self, subdivision: Option<usize>, emit_color: bool)
         -> String
     {
         // if subdivision is given, insert visual subdivisor lines across the grid every Nth row/col

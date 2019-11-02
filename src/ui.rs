@@ -1,5 +1,5 @@
 // vim: set ai et ts=4 sts=4 sw=4:
-use super::puzzle::Puzzle;
+use super::puzzle::{Puzzle, Solver};
 use super::grid::SquareStatus;
 use super::row::Row;
 use super::Args;
@@ -8,7 +8,7 @@ use std::convert::TryFrom;
 use std::fmt;
 use piston::window::WindowSettings;
 use piston::event_loop::{Events, EventLoop, EventSettings};
-use piston::input::{RenderEvent, GenericEvent};
+use piston::input::{RenderEvent, GenericEvent, Button, Key};
 use glutin_window::GlutinWindow;
 use graphics::{Context, Graphics, clear};
 use graphics::{Rectangle, Line, Transformed, Image, Text};
@@ -17,19 +17,34 @@ use graphics::character::CharacterCache;
 use opengl_graphics::{OpenGL, GlGraphics, Filter, GlyphCache, TextureSettings};
 
 struct PuzzleController {
-    pub puzzle: Puzzle,
+    //pub puzzle: Puzzle,
+    pub solver: Solver,
     pub cursor_pos: [f64;2],
 }
 impl PuzzleController {
     pub fn new(puzzle: Puzzle) -> Self {
         PuzzleController {
-            puzzle,
+            solver: Solver::new(puzzle),
             cursor_pos: [-1.0,-1.0]
         }
     }
     pub fn event<E: GenericEvent>(&mut self, e: &E) {
         if let Some(pos) = e.mouse_cursor_args() {
             self.cursor_pos = pos;
+        }
+        if let Some(Button::Keyboard(key)) = e.press_args() {
+            match key {
+                Key::S => {
+                    // single-step the solver
+                    if let Some(iteration_result) = self.solver.next() {
+                        match iteration_result {
+                            Ok((d,i,changes)) => { }
+                            Err(_) => { }
+                        }
+                    }
+                }
+                _ => {}
+            }
         }
     }
 }
@@ -163,19 +178,19 @@ impl PuzzleView {
     }
     pub fn draw_square<G: Graphics>(&self, x: usize,
                                            y: usize,
-                                           is_selected: bool,
+                                           is_highlighted: bool,
                                            controller: &PuzzleController,
                                            c: &Context,
                                            g: &mut G)
     {
-        // note: we're in a translated context, so we can draw our square starting at (0,0)
+        // note: we're in a translated context, so we can draw our square starting at (0,0) in the top left
         let square_size = self.settings.square_size;
         let square_rect = [0.0, 0.0, square_size, square_size];
 
-        let square = controller.puzzle.get_square(x, y);
+        let square = controller.solver.puzzle.get_square(x, y);
         match square.get_status() {
             SquareStatus::FilledIn   => {
-                let fill_style = Rectangle::new(match is_selected {
+                let fill_style = Rectangle::new(match is_highlighted {
                     true  => self.settings.filled_sq_fill_color_hl,
                     false => self.settings.filled_sq_fill_color,
                 });
@@ -242,7 +257,7 @@ impl PuzzleView {
 
             let subdivision_size = settings.subdivision_size.unwrap_or(0usize);
             let square_size = settings.square_size;
-            let puzzle = &controller.puzzle;
+            let puzzle = &controller.solver.puzzle;
 
             // rectangles are specified by: [x, y, w, h]
             // lines are specified by: [x1, y1, x2, y2]
@@ -256,18 +271,15 @@ impl PuzzleView {
             let grid_drawwidth  = (puzzle.width() as f64) * square_size;
             let grid_drawheight = (puzzle.height() as f64) * square_size;
 
-            let selected_sq_pos = self.mouse_pos_to_square(&controller.puzzle, controller.cursor_pos);
+            let highlighted_sq_pos = self.mouse_pos_to_square(&controller.solver.puzzle, controller.cursor_pos);
 
             // draw squares
             for y in 0..puzzle.height() {
                 for x in 0..puzzle.width() {
-                    let is_selected = match selected_sq_pos {
-                        Some([sx, sy]) => x == sx && y == sy,
-                        None           => false,
-                    };
+                    let is_highlighted = highlighted_sq_pos.map(|[hx, hy]| hx == x && hy == y).unwrap_or(false);
                     let c = c.trans(grid_xoffset + (x as f64)*square_size,
                                     grid_yoffset + (y as f64)*square_size);
-                    self.draw_square(x, y, is_selected, controller, &c, g);
+                    self.draw_square(x, y, is_highlighted, controller, &c, g);
                 }
             }
 
@@ -322,7 +334,7 @@ pub fn ui_main(puzzle: Puzzle, args: &Args)
                                    .exit_on_esc(true);
     let mut window: GlutinWindow = settings.build().expect("Could not create window");
 
-    let mut events = Events::new(EventSettings::new().lazy(true));
+    let mut events = Events::new(EventSettings::new());
     let mut gl = GlGraphics::new(opengl_version);
 
     let mut puzzle_controller = PuzzleController::new(puzzle);
@@ -335,8 +347,8 @@ pub fn ui_main(puzzle: Puzzle, args: &Args)
 
     while let Some(e) = events.next(&mut window) {
         puzzle_controller.event(&e);
-        if let Some(args) = e.render_args() {
-            gl.draw(args.viewport(), |c, g| {
+        if let Some(ev_args) = e.render_args() {
+            gl.draw(ev_args.viewport(), |c, g| {
                 clear([1.0;4], g);
                 puzzle_view.draw(&puzzle_controller, &c, &mut glyphs, g);
             });

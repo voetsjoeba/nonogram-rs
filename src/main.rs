@@ -17,9 +17,9 @@ mod row;
 mod ui;
 
 use self::util::{is_a_tty, Direction};
-use self::puzzle::Puzzle;
+use self::puzzle::{Puzzle, Solver};
 use self::ui::ui_main;
-use self::grid::{Change, StatusChange, RunChange, SquareStatus};
+use self::grid::{Change, StatusChange, RunChange, SquareStatus, Error};
 
 #[derive(Debug)]
 pub struct Args {
@@ -96,6 +96,72 @@ fn parse_actions(actions_str: String) -> Vec<Change> {
     changes
 }
 
+fn solve(puzzle: Puzzle, args: &Args)
+{
+    let mut solver = Solver::new(puzzle);
+
+    // keep a queue of rows to be looked at, and run the individual solvers on each
+    // of them in sequence until there are none left in the queue. whenever a change
+    // is made to a square in the grid, those rows are added back into the queue
+    // for evaluation on the next run. completed runs are removed from the queue.
+    println!("starting state:");
+    println!("\n{}", solver.puzzle._fmt(args.visual_groups, args.emit_color));
+
+    let mut on_stall_actions_applied = false;
+    loop
+    {
+        while let Some(iteration_result) = solver.next() {
+            match iteration_result {
+                Ok((row_dir, row_idx, changes)) => {
+                    println!("finished solvers on {} row {}; changes in this iteration:", row_dir, row_idx);
+                    for change in &changes {
+                        println!("  {}", change);
+                    }
+
+                    println!("\n{}", solver.puzzle._fmt(args.visual_groups, args.emit_color));
+                    println!("--------------------------------------");
+                    println!("");
+                }
+                Err(e) => {
+                    println!("\nencountered error during solving:");
+                    println!("{}", e);
+                    return;
+                }
+            }
+        }
+
+        println!("final state:");
+        println!("\n{}", solver.puzzle._fmt(args.visual_groups, args.emit_color));
+
+        if solver.puzzle.is_completed() {
+            println!("puzzle solved! ({} iterations)", solver.iterations);
+            break;
+        }
+        else {
+            println!("puzzle partially solved, out of actions ({} iterations).", solver.iterations);
+
+            // if the user gave us some actions to apply on a stall, apply those now and resume
+            // looping; otherwise, report failure to solve and bail out.
+            if args.actions_on_stall.len() > 0 && !on_stall_actions_applied {
+                println!("\napplying user-supplied actions on stall:");
+                for change in &args.actions_on_stall {
+                    println!("  {}", change);
+                    solver.apply_and_feed_change(change);
+                }
+                on_stall_actions_applied = true;
+
+                println!("resuming solver loop\n");
+                continue;
+            }
+
+            // no stall actions supplied or already applied them; report state and bail out.
+            solver.puzzle.dump_state();
+            break;
+        }
+    }
+}
+
+
 fn main() {
     let args = App::new("nonogram")
                    .arg(Arg::with_name("input_file")
@@ -162,13 +228,8 @@ Run assignment actions will automatically fill in squares prior to assigning a r
 
     let mut puzzle = Puzzle::from_yaml(doc);
     if args.ui {
-        if let Err(x) = puzzle.solve(&args) {
-            println!("\nFailed to solve puzzle!\n  {}", x);
-        }
         ui_main(puzzle, &args);
     } else {
-        if let Err(x) = puzzle.solve(&args) {
-            println!("\nFailed to solve puzzle!\n  {}", x);
-        }
+        solve(puzzle, &args);
     }
 }
