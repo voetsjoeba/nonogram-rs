@@ -393,7 +393,7 @@ Press S to single-step the solver.", num_squares_known, num_squares_total,
 pub fn ui_main(puzzle: Puzzle, args: &Args)
 {
     let opengl_version = OpenGL::V3_2;
-    let settings = WindowSettings::new("Sudoku", [1200, 800])
+    let settings = WindowSettings::new("Nonogram", [1200, 800])
                                    .graphics_api(opengl_version)
                                    .exit_on_esc(true);
     let mut window: GlutinWindow = settings.build().expect("Could not create window");
