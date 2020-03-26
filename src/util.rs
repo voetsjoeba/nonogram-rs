@@ -3,6 +3,8 @@ use std::fmt;
 use std::io;
 use std::convert::TryFrom;
 use std::os::unix::io::AsRawFd;
+use std::rc::Rc;
+use std::cell::RefCell;
 use ansi_term::ANSIString;
 
 pub fn maybe_color(s: &ANSIString, emit_color: bool) -> String {
@@ -78,3 +80,4 @@ pub fn vec_remove_item<T: PartialEq>(vec: &mut Vec<T>, item: &T) -> Option<T> {
     let pos = vec.iter().position(|x| *x == *item)?;
     Some(vec.remove(pos))
 }
+

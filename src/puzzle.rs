@@ -5,30 +5,27 @@ use std::rc::Rc;
 use std::cell::{Ref, RefMut, RefCell};
 use std::convert::TryFrom;
 use std::collections::{VecDeque, HashSet};
+use std::iter::FromIterator;
 use yaml_rust::Yaml;
 use ansi_term::ANSIString;
 
 use super::Args;
-use super::grid::{Grid, Square, SquareStatus, Change, Changes, Error, HasGridLocation};
+use super::grid::{Grid, Square, SquareStatus, Change, Changes, Error, HasGridLocation, CloneGridAware};
 use super::util::{ralign, lalign_colored, ralign_joined_coloreds, Direction, Direction::*, is_a_tty};
 use super::row::{Row, Run};
 
 pub struct Solver {
     pub puzzle: Puzzle,
-    pub queue: VecDeque<(Direction, usize)>,
-    pub iterations: usize,
-    pub max_iterations: usize,
+    pub queue: VecDeque<(Direction, usize)>, // queue of rows (vertical or horizontal) to be (re-)evaluated next
+    pub iterations: usize,                   // total number of rows evaluated for new information to be inferred (whether successfully or not)
+    pub max_iterations: usize,               // safety against infinite solver loops
 }
 impl Solver {
     pub fn new(puzzle: Puzzle) -> Self
     {
-        let mut queue = VecDeque::<(Direction, usize)>::new();
-        queue.extend(puzzle.rows.iter().map(|r| (r.direction, r.index)));
-        queue.extend(puzzle.cols.iter().map(|c| (c.direction, c.index)));
-
         Self {
+            queue: VecDeque::from_iter(puzzle.incomplete_rows()),
             puzzle,
-            queue,
             iterations: 0,
             max_iterations: 100_000,
         }
@@ -38,8 +35,7 @@ impl Solver {
         self._refeed_change(change);
     }
     fn _refeed_change(&mut self, change: &Change) {
-        // takes a change and feeds the row and column that it affected back into the
-        // queue.
+        // takes a change and feeds the row and column that it affected back into the queue.
         let (row, col) = (change.get_row(), change.get_col());
         let h_value = (self.puzzle.rows[row].direction, self.puzzle.rows[row].index);
         let v_value = (self.puzzle.cols[col].direction, self.puzzle.cols[col].index);
@@ -65,10 +61,7 @@ impl Solver {
                 panic!("max iterations exceeded, aborting");
             }
 
-            let row = match d {
-                Horizontal => &mut self.puzzle.rows[i],
-                Vertical   => &mut self.puzzle.cols[i],
-            };
+            let row: &mut Row = self.puzzle.get_row_mut(d,i);
 
             // before doing any further work, check whether this row is already_completed
             // (includes handling of trivial cases like empty rows etc)
@@ -77,7 +70,9 @@ impl Solver {
             changes.extend(changes_or_return!(row.check_completed()));
 
             if !row.is_completed() {
-                row.update_possible_run_placements();
+                if let Err(e) = row.update_possible_run_placements() {
+                    return Some(Err(e));
+                }
                 changes.extend(changes_or_return!(row.infer_run_assignments()));
                 changes.extend(changes_or_return!(row.infer_status_assignments()));
             }
@@ -129,6 +124,15 @@ impl Puzzle {
     pub fn width(&self) -> usize { self.grid.borrow().width() }
     pub fn height(&self) -> usize { self.grid.borrow().height() }
 
+    pub fn incomplete_rows(&self) -> Vec<(Direction, usize)> {
+        // returns a vector of (direction, index) pairs of rows (either horizontal or vertical)
+        // that are not yet marked as completed
+        let mut res = Vec::new();
+        res.extend(self.rows.iter().filter(|r| !r.is_completed()).map(|r| (r.direction, r.index)));
+        res.extend(self.cols.iter().filter(|c| !c.is_completed()).map(|c| (c.direction, c.index)));
+        res
+    }
+
     pub fn from_yaml(doc: &Yaml) -> Puzzle
     {
         let row_run_lengths = Self::_parse_row(&doc["rows"]);
@@ -166,6 +170,18 @@ impl Puzzle {
     pub fn get_square_mut(&self, x: usize, y: usize) -> RefMut<Square> {
         let grid = self.grid.borrow_mut();
         RefMut::map(grid, |g| g.get_square_mut(x, y))
+    }
+    pub fn get_row(&self, direction: Direction, index: usize) -> &Row {
+        match direction {
+            Horizontal => &self.rows[index],
+            Vertical   => &self.cols[index],
+        }
+    }
+    pub fn get_row_mut(&mut self, direction: Direction, index: usize) -> &mut Row {
+        match direction {
+            Horizontal => &mut self.rows[index],
+            Vertical   => &mut self.cols[index],
+        }
     }
     fn apply_change(&mut self, change: Change) -> Result<Option<Change>, Error> {
         let mut square = self.get_square_mut(change.get_col(), change.get_row());
@@ -349,6 +365,21 @@ impl fmt::Display for Puzzle {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let subdivision = Some(5);
         write!(f, "{}", self._fmt(subdivision, false))
+    }
+}
+impl CloneGridAware for Puzzle {
+    fn clone_with_grid(&self, grid: &Rc<RefCell<Grid>>) -> Self {
+        Puzzle {
+            rows: self.rows.iter().map(|r| r.clone_with_grid(&grid)).collect(),
+            cols: self.cols.iter().map(|c| c.clone_with_grid(&grid)).collect(),
+            grid: Rc::clone(grid),
+        }
+    }
+}
+impl Clone for Puzzle {
+    fn clone(&self) -> Self {
+        let grid: Rc<RefCell<Grid>> = Rc::new(RefCell::new(self.grid.borrow().clone()));
+        self.clone_with_grid(&grid)
     }
 }
 

@@ -1,6 +1,7 @@
 // vim: set ai et ts=4 sts=4 sw=4:
 #![allow(dead_code, unused_imports)]
 use std::fs;
+use std::mem;
 use std::io;
 use std::env;
 use std::ops::Range;
@@ -16,8 +17,9 @@ mod grid;
 mod row;
 mod ui;
 
-use self::util::{is_a_tty, Direction};
+use self::util::{is_a_tty, Direction, Direction::*};
 use self::puzzle::{Puzzle, Solver};
+use self::row::{Row, DirectionalSequence};
 use self::ui::ui_main;
 use self::grid::{Change, StatusChange, RunChange, SquareStatus, Error};
 
@@ -96,9 +98,40 @@ fn parse_actions(actions_str: String) -> Vec<Change> {
     changes
 }
 
-fn solve(puzzle: Puzzle, args: &Args)
+fn _solve_with_logic(solver: &mut Solver, args: &Args) -> Result<(), Error>
 {
+    // tries to solve the puzzle as far as possible using only logically-inferrable changes
+    // returns Ok(()) when there are no more actions (regardless of whether the puzzle has been solved),
+    // or Err(Error) in case a conflict or impossibility was found.
+    while let Some(iteration_result) = solver.next() {
+        match iteration_result {
+            Ok((row_dir, row_idx, changes)) => {
+                println!("finished solvers on {} row {}; changes in this iteration:", row_dir, row_idx);
+                for change in &changes {
+                    println!("  {}", change);
+                }
+
+                println!("\n{}", solver.puzzle._fmt(args.visual_groups, args.emit_color));
+                println!("--------------------------------------");
+                println!("");
+            },
+            Err(e) => {
+                println!("\nencountered error during solving:");
+                println!("{}", e);
+                return Err(e);
+            }
+        }
+    }
+    return Ok(())
+}
+
+fn solve(mut puzzle: Puzzle, args: &Args) -> Result<Puzzle, Error>
+{
+    // attempts to solve the given puzzle to completion.
+    // returns the solved puzzle on success, or an error indicator in case of an impossibility or a conflict.
+
     let mut solver = Solver::new(puzzle);
+    //let mut speculation_bases = Vec::<Puzzle>::new();
 
     // keep a queue of rows to be looked at, and run the individual solvers on each
     // of them in sequence until there are none left in the queue. whenever a change
@@ -110,24 +143,8 @@ fn solve(puzzle: Puzzle, args: &Args)
     let mut on_stall_actions_applied = false;
     loop
     {
-        while let Some(iteration_result) = solver.next() {
-            match iteration_result {
-                Ok((row_dir, row_idx, changes)) => {
-                    println!("finished solvers on {} row {}; changes in this iteration:", row_dir, row_idx);
-                    for change in &changes {
-                        println!("  {}", change);
-                    }
-
-                    println!("\n{}", solver.puzzle._fmt(args.visual_groups, args.emit_color));
-                    println!("--------------------------------------");
-                    println!("");
-                }
-                Err(e) => {
-                    println!("\nencountered error during solving:");
-                    println!("{}", e);
-                    return;
-                }
-            }
+        if let Err(e) = _solve_with_logic(&mut solver, args) {
+            return Err(e);
         }
 
         println!("final state:");
@@ -137,28 +154,70 @@ fn solve(puzzle: Puzzle, args: &Args)
             println!("puzzle solved! ({} iterations)", solver.iterations);
             break;
         }
-        else {
-            println!("puzzle partially solved, out of actions ({} iterations).", solver.iterations);
 
-            // if the user gave us some actions to apply on a stall, apply those now and resume
-            // looping; otherwise, report failure to solve and bail out.
-            if args.actions_on_stall.len() > 0 && !on_stall_actions_applied {
-                println!("\napplying user-supplied actions on stall:");
-                for change in &args.actions_on_stall {
-                    println!("  {}", change);
-                    solver.apply_and_feed_change(change);
-                }
-                on_stall_actions_applied = true;
+        println!("puzzle partially solved, out of actions ({} iterations).", solver.iterations);
 
-                println!("resuming solver loop\n");
-                continue;
+        // we're out of decisions that can be made with logic, so we're forced to start solving
+        // speculatively -- i.e. make a decision at some point and see if it introduces a logic error;
+        // if it does, revert the work and make the opposite change.
+        let edited_puzzle = solver.puzzle.clone();
+
+        // find a square with unknown state and set it to something, and try to continue
+        // TODO: how to choose a square to speculatively change, and do we make it filled in or crossed out?
+        // can we come up with some metric of "further solving power" resulting from changing a square's state?
+        // TODO: besides setting a square's state, we could also pick one that's filled in but doesn't have a known
+        // run, and update the run and see what happens; that might actually give pretty good solving power ...
+        let mut unknown_square: Option<(usize, usize)> = None;
+        let incomplete_rows = edited_puzzle.incomplete_rows();
+        for (d,i) in incomplete_rows {
+            let row: &Row = solver.puzzle.get_row(d,i);
+            if let Some(sq) = (0..row.length).map(|at| row.get_square(at))
+                                             .filter(|sq| sq.get_status() == SquareStatus::Unknown)
+                                             .next() {
+                unknown_square = Some((sq.get_col(), sq.get_row()));
+                break;
             }
-
-            // no stall actions supplied or already applied them; report state and bail out.
-            solver.puzzle.dump_state();
-            break;
         }
+        // decide that it's gonna be a filled in square and see if anything freaks out
+        let (x,y) = unknown_square.unwrap(); // has to succeed, otherwise the puzzle would've been solved
+        edited_puzzle.get_square_mut(x,y).set_status(SquareStatus::FilledIn).unwrap();
+
+        // recursively try to solve with the given speculative change; in case of a conflict, make the inverse
+        // change and continue.
+        match solve(edited_puzzle, args) {
+            Ok(solved_puzzle) =>  {
+                // we made the right edit, and the recursive call managed to finish solving the whole puzzle,
+                // so we can just make that our current one and break out of the solve loop
+                solver.puzzle = solved_puzzle;
+                break;
+            },
+            Err(e) => {
+                // we made the wrong edit; apply the inverse change and continue trying to solve it
+                solver.puzzle.get_square_mut(x,y).set_status(SquareStatus::CrossedOut).unwrap();
+            },
+        }
+
+        /*
+        // if the user gave us some actions to apply on a stall, apply those now and resume
+        // looping; otherwise, report failure to solve and bail out.
+        if args.actions_on_stall.len() > 0 && !on_stall_actions_applied {
+            println!("\napplying user-supplied actions on stall:");
+            for change in &args.actions_on_stall {
+                println!("  {}", change);
+                solver.apply_and_feed_change(change);
+            }
+            on_stall_actions_applied = true;
+
+            println!("resuming solver loop\n");
+            continue;
+        }
+
+        // no stall actions supplied or already applied them; report state and bail out.
+        solver.puzzle.dump_state();
+        break;
+        */
     }
+    Ok(solver.puzzle)
 }
 
 

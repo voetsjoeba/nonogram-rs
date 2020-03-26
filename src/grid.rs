@@ -1,6 +1,8 @@
 // vim: set ai et ts=4 sts=4:
 use std::fmt;
 use std::convert::{From, TryFrom};
+use std::rc::{Rc};
+use std::cell::{RefCell};
 use super::util::{Direction, Direction::*};
 use super::row::Run;
 
@@ -183,6 +185,7 @@ pub type RunResult    = Result<Option<RunChange>, RunError>; // ditto
 pub enum Error {
     Status(StatusError),
     Run(RunError),
+    Logic(String),
 }
 impl From<StatusError> for Error {
     fn from(other: StatusError) -> Self {
@@ -199,13 +202,14 @@ impl fmt::Display for Error {
         write!(f, "{}", match self {
             Error::Status(x) => x.to_string(),
             Error::Run(x)    => x.to_string(),
+            Error::Logic(s)  => s.to_string(),
         })
     }
 }
 
 // ------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Square {
     row: usize,
     col: usize,
@@ -334,6 +338,7 @@ impl HasGridLocation for Square {
 
 // ------------------------------------------------
 
+#[derive(Clone)]
 pub struct Grid {
     pub squares: Vec<Vec<Square>>,
 }
@@ -362,5 +367,12 @@ impl fmt::Debug for Grid {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Grid(w={}, h={})", self.width(), self.height())
     }
+}
+
+// ------------------------------------------------
+
+pub trait CloneGridAware {
+    // clones a struct that carries an Rc<RefCell<Grid>>
+    fn clone_with_grid(&self, grid: &Rc<RefCell<Grid>>) -> Self;
 }
 

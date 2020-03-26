@@ -12,7 +12,7 @@ use std::collections::HashSet;
 use ansi_term::{Colour, Style, ANSIString};
 
 use super::util::{Direction, Direction::*};
-use super::grid::{Grid, Square, SquareStatus::{CrossedOut, FilledIn}, Change, Changes, Error};
+use super::grid::{Grid, Square, SquareStatus::{CrossedOut, FilledIn}, Change, Changes, Error, CloneGridAware};
 
 pub trait DirectionalSequence
 {
@@ -164,6 +164,21 @@ impl DirectionalSequence for Row {
     fn get_grid(&self)      -> &Rc<RefCell<Grid>> { &self.grid }
 }
 
+impl CloneGridAware for Row {
+    fn clone_with_grid(&self, grid: &Rc<RefCell<Grid>>) -> Self {
+        Row {
+            direction:    self.direction.clone(),
+            index:        self.index.clone(),
+            length:       self.length.clone(),
+            completed:    self.completed.clone(),
+            runs:         self.runs.iter().map(|run| run.clone_with_grid(grid)).collect(),
+            grid:         Rc::clone(grid),
+        }
+    }
+}
+
+// -------------------------------------------------------------
+
 #[derive(Debug)]
 pub struct Run {
     pub direction: Direction,
@@ -246,6 +261,21 @@ impl DirectionalSequence for Run {
 impl fmt::Display for Run {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.length.to_string())
+    }
+}
+
+impl CloneGridAware for Run {
+    fn clone_with_grid(&self, grid: &Rc<RefCell<Grid>>) -> Self {
+        Run {
+            direction:             self.direction.clone(),
+            length:                self.length.clone(),
+            index:                 self.index.clone(),
+            row_index:             self.row_index.clone(),
+            row_length:            self.row_length.clone(),
+            possible_placements:   self.possible_placements.clone(),
+            completed:             self.completed.clone(),
+            grid:                  Rc::clone(grid),
+        }
     }
 }
 

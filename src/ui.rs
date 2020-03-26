@@ -39,7 +39,7 @@ impl PuzzleController {
                     // single-step the solver
                     if let Some(iteration_result) = self.solver.next() {
                         match iteration_result {
-                            Ok((d,i,changes)) => { }
+                            Ok((_d,_i,_changes)) => { }
                             Err(_) => { }
                         }
                     }

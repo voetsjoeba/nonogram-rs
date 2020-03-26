@@ -13,9 +13,9 @@ use super::super::grid::{Grid, Square, SquareStatus::{CrossedOut, FilledIn, Unkn
 
 impl Row {
 
-    pub fn update_possible_run_placements(&mut self)
+    pub fn update_possible_run_placements(&mut self) -> Result<(), Error>
     {
-        // for each run in this row, calculates the possible placements of the run within the row,
+        // for each run in this row, calculates the possible placements of that run within the row,
         // taking the current state of the row into account (i.e. crossed out squares, filled in squares, etc).
 
         // a run of length L can be placed at position S, creating a range we'll denote as S..E,
@@ -30,8 +30,7 @@ impl Row {
 
 
         // the valid positions of a run depend on those of the runs that come before AND after it, but we can
-        // only iterate on direction at a time.
-        // so we'll work in two stages:
+        // only iterate in one direction at a time, so we'll work in two stages:
         //  1) L -> R scan, determining the possible run placements looking only at those of the runs before it
         //  2) R -> L scan, dropping possible run placements that:
         //       * infringe on the requirement of having to end to end before the following run's latest starting position - 1.
@@ -156,14 +155,17 @@ impl Row {
         // make sure all runs received at least one possible placement, otherwise something's wrong
         for run in &self.runs {
             if run.possible_placements.len() == 0 {
-                panic!("Inconsistency: no possible placements found for {} run #{} of length {} in {} row {}",
-                       self.direction,
-                       run.index,
-                       run.length,
-                       self.direction,
-                       self.index);
+                return Err(Error::Logic(format!(
+                    "Inconsistency: no possible placements found for {} run #{} of length {} in {} row {}",
+                    self.direction,
+                    run.index,
+                    run.length,
+                    self.direction,
+                    self.index
+                )));
             }
         }
+        Ok(())
     }
 
     pub fn infer_status_assignments(&mut self) -> Result<Changes, Error>
@@ -420,7 +422,8 @@ impl Row {
             {
                 let seq = &filled_sequences[seq_idx];
                 if possible_runs.len() == 0 {
-                    panic!("Inconsistency: no run found that can encompass the sequence of filled squares [{}, {}] in {} row {}", seq.start, seq.end-1, self.direction, self.index);
+                    //panic!();
+                    return Err(Error::Logic(format!("Inconsistency: no run found that can encompass the sequence of filled squares [{}, {}] in {} row {}", seq.start, seq.end-1, self.direction, self.index)));
                 }
                 else if possible_runs.len() == 1 {
                     // only one run could possibly encompass this sequence; assign it to each square
@@ -516,8 +519,9 @@ impl Row {
 
             if unique_runs.len() > 1 {
                 // found more than one run in contiguous sequence of squares; inconsistency
-                panic!("Found {} different runs in contiguous sequence of {} squares in {} row {}",
-                    unique_runs.len(), seq.len(), self.direction, self.index);
+                return Err(Error::Logic(format!(
+                    "Found {} different runs in contiguous sequence of {} squares in {} row {}",
+                    unique_runs.len(), seq.len(), self.direction, self.index)));
             }
             if unique_runs.len() == 1 {
                 // assign run to all squares in this sequence
