@@ -10,6 +10,8 @@ use std::process::exit;
 use std::vec::Vec;
 use yaml_rust::{YamlLoader, Yaml};
 use clap::{Arg, App, ArgMatches};
+use fern;
+use log::{self, trace, debug, info, log_enabled, Level::Debug};
 
 mod util;
 mod puzzle;
@@ -26,6 +28,7 @@ use self::grid::{Change, StatusChange, RunChange, SquareStatus, Error};
 #[derive(Debug)]
 pub struct Args {
     ui: bool,
+    verbosity: u64,
     input_file: String,
     emit_color: bool,
     visual_groups: Option<usize>,
@@ -106,18 +109,20 @@ fn _solve_with_logic(solver: &mut Solver, args: &Args) -> Result<(), Error>
     while let Some(iteration_result) = solver.next() {
         match iteration_result {
             Ok((row_dir, row_idx, changes)) => {
-                println!("finished solvers on {} row {}; changes in this iteration:", row_dir, row_idx);
-                for change in &changes {
-                    println!("  {}", change);
-                }
+                if log_enabled!(Debug) {
+                    debug!("finished solvers on {} row {}; changes in this iteration:", row_dir, row_idx);
+                    for change in &changes {
+                        debug!("  {}", change);
+                    }
 
-                println!("\n{}", solver.puzzle._fmt(args.visual_groups, args.emit_color));
-                println!("--------------------------------------");
-                println!("");
+                    debug!("\n{}", solver.puzzle._fmt(args.visual_groups, args.emit_color));
+                    debug!("--------------------------------------");
+                    debug!("");
+                }
             },
             Err(e) => {
-                println!("\nencountered error during solving:");
-                println!("{}", e);
+                debug!("\nencountered error during solving:");
+                debug!("{}", e);
                 return Err(e);
             }
         }
@@ -125,7 +130,7 @@ fn _solve_with_logic(solver: &mut Solver, args: &Args) -> Result<(), Error>
     return Ok(())
 }
 
-fn solve(mut puzzle: Puzzle, args: &Args) -> Result<Puzzle, Error>
+fn solve(puzzle: Puzzle, args: &Args) -> Result<Puzzle, (Error, Puzzle)>
 {
     // attempts to solve the given puzzle to completion.
     // returns the solved puzzle on success, or an error indicator in case of an impossibility or a conflict.
@@ -137,25 +142,25 @@ fn solve(mut puzzle: Puzzle, args: &Args) -> Result<Puzzle, Error>
     // of them in sequence until there are none left in the queue. whenever a change
     // is made to a square in the grid, those rows are added back into the queue
     // for evaluation on the next run. completed runs are removed from the queue.
-    println!("starting state:");
-    println!("\n{}", solver.puzzle._fmt(args.visual_groups, args.emit_color));
+    debug!("starting state:");
+    debug!("\n{}", solver.puzzle._fmt(args.visual_groups, args.emit_color));
 
     let mut on_stall_actions_applied = false;
     loop
     {
         if let Err(e) = _solve_with_logic(&mut solver, args) {
-            return Err(e);
+            return Err((e, solver.puzzle));
         }
 
-        println!("final state:");
-        println!("\n{}", solver.puzzle._fmt(args.visual_groups, args.emit_color));
+        debug!("final state:");
+        debug!("\n{}", solver.puzzle._fmt(args.visual_groups, args.emit_color));
 
         if solver.puzzle.is_completed() {
-            println!("puzzle solved! ({} iterations)", solver.iterations);
+            debug!("puzzle solved! ({} iterations)", solver.iterations);
             break;
         }
 
-        println!("puzzle partially solved, out of actions ({} iterations).", solver.iterations);
+        debug!("puzzle partially solved, out of actions ({} iterations).", solver.iterations);
 
         // we're out of decisions that can be made with logic, so we're forced to start solving
         // speculatively -- i.e. make a decision at some point and see if it introduces a logic error;
@@ -178,8 +183,10 @@ fn solve(mut puzzle: Puzzle, args: &Args) -> Result<Puzzle, Error>
                 break;
             }
         }
+
         // decide that it's gonna be a filled in square and see if anything freaks out
         let (x,y) = unknown_square.unwrap(); // has to succeed, otherwise the puzzle would've been solved
+        debug!("speculatively change: setting square (x={}, y={}) to {}", x, y, SquareStatus::FilledIn);
         edited_puzzle.get_square_mut(x,y).set_status(SquareStatus::FilledIn).unwrap();
 
         // recursively try to solve with the given speculative change; in case of a conflict, make the inverse
@@ -191,8 +198,10 @@ fn solve(mut puzzle: Puzzle, args: &Args) -> Result<Puzzle, Error>
                 solver.puzzle = solved_puzzle;
                 break;
             },
-            Err(e) => {
+            Err(_) => {
                 // we made the wrong edit; apply the inverse change and continue trying to solve it
+                debug!("speculative change (x={}, y={}) -> {} produced an error", x, y, SquareStatus::FilledIn);
+                debug!("must therefore be {} instead, making that change", SquareStatus::CrossedOut);
                 solver.puzzle.get_square_mut(x,y).set_status(SquareStatus::CrossedOut).unwrap();
             },
         }
@@ -201,14 +210,14 @@ fn solve(mut puzzle: Puzzle, args: &Args) -> Result<Puzzle, Error>
         // if the user gave us some actions to apply on a stall, apply those now and resume
         // looping; otherwise, report failure to solve and bail out.
         if args.actions_on_stall.len() > 0 && !on_stall_actions_applied {
-            println!("\napplying user-supplied actions on stall:");
+            debug!("\napplying user-supplied actions on stall:");
             for change in &args.actions_on_stall {
-                println!("  {}", change);
+                debug!("  {}", change);
                 solver.apply_and_feed_change(change);
             }
             on_stall_actions_applied = true;
 
-            println!("resuming solver loop\n");
+            debug!("resuming solver loop\n");
             continue;
         }
 
@@ -257,10 +266,16 @@ Exactly one of the row or columns must be specified as a range, not both and not
 Run assignment actions will automatically fill in squares prior to assigning a run to the square.")
                              .long("on-stall")
                              .takes_value(true))
+                   .arg(Arg::with_name("verbose")
+                             .help("Increases logging verbosity each use for up to 3 times")
+                             .short("v")
+                             .long("verbose")
+                             .multiple(true))
                    .get_matches();
 
     let args: Args = Args {
         ui: args.is_present("ui"),
+        verbosity: args.occurrences_of("verbose"),
         input_file: args.value_of("input_file").unwrap().to_string(),
         emit_color: match args.value_of("color") {
             Some("yes")  => true,
@@ -278,6 +293,18 @@ Run assignment actions will automatically fill in squares prior to assigning a r
         }
     };
 
+    let mut log_config = fern::Dispatch::new()
+                            .format(|out, msg, _record| {
+                                out.finish(format_args!("{}", msg))
+                            })
+                            .chain(io::stdout());
+    log_config = match args.verbosity {
+        0 => log_config.level(log::LevelFilter::Info),
+        1 => log_config.level(log::LevelFilter::Debug),
+        _ => log_config.level(log::LevelFilter::Trace),
+    };
+    log_config.apply().unwrap();
+
     let contents = fs::read_to_string(&args.input_file)
                        .expect("Failed to read input file");
 
@@ -285,10 +312,18 @@ Run assignment actions will automatically fill in squares prior to assigning a r
     let docs: Vec<Yaml> = YamlLoader::load_from_str(&contents).unwrap();
     let doc: &Yaml = &docs[0];
 
-    let mut puzzle = Puzzle::from_yaml(doc);
+    let puzzle = Puzzle::from_yaml(doc);
     if args.ui {
         ui_main(puzzle, &args);
     } else {
-        solve(puzzle, &args);
+        match solve(puzzle, &args) {
+            Ok(solved) => {
+                println!("{}", solved._fmt(args.visual_groups, args.emit_color));
+            },
+            Err((e, partially_solved)) => {
+                println!("{}", partially_solved._fmt(args.visual_groups, args.emit_color));
+                println!("encountered error during solving: {}", e);
+            },
+        }
     }
 }

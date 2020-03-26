@@ -8,6 +8,7 @@ use std::collections::{VecDeque, HashSet};
 use std::iter::FromIterator;
 use yaml_rust::Yaml;
 use ansi_term::ANSIString;
+use log::{trace, debug, info, log_enabled, Level::Trace};
 
 use super::Args;
 use super::grid::{Grid, Square, SquareStatus, Change, Changes, Error, HasGridLocation, CloneGridAware};
@@ -194,34 +195,38 @@ impl Puzzle {
 }
 
 impl Puzzle {
-    pub fn dump_state(&self) {
-        println!("run possible placements:");
+    #[allow(unused)]
+    pub fn dump_state(&self) -> String {
+        let mut result = String::new();
+
+        result.push_str("run possible placements:\n");
         for row in self.rows.iter().chain(self.cols.iter()) {
             if row.is_trivially_empty() { continue; }
-            println!("  {:-10} row {:2}:", row.direction, row.index);
+            result.push_str(&format!("  {:-10} row {:2}:\n", row.direction, row.index));
             for run in &row.runs {
-                println!("    run {:2} (len {}): {}", run.index, run.length,
+                result.push_str(&format!("    run {:2} (len {}): {}\n", run.index, run.length,
                     run.possible_placements.iter()
                                            .map(|range| format!("[{},{}]", range.start, range.end-1))
                                            .collect::<Vec<_>>()
-                                           .join(", "));
+                                           .join(", ")));
             }
         }
 
-        println!("run assignment overview:");
+        result.push_str("run assignment overview:\n");
         let grid = self.grid.borrow();
         for y in 0..self.height() {
             for x in 0..self.width() {
                 let square: &Square = grid.get_square(x, y);
                 if square.get_status() == SquareStatus::FilledIn {
-                    println!("  {}: hrun_index={}, vrun_index={}",
+                    result.push_str(&format!("  {}: hrun_index={}, vrun_index={}\n",
                         square.fmt_location(),
                         if let Some(idx) = square.get_run_index(Direction::Horizontal) { idx.to_string() } else { "?".to_string() },
                         if let Some(idx) = square.get_run_index(Direction::Vertical) { idx.to_string() } else { "?".to_string() }
-                    );
+                    ));
                 }
             }
         }
+        result
     }
 
     // helper functions for Puzzle::fmt

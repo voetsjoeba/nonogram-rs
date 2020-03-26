@@ -6,6 +6,8 @@ use std::cmp::{min, max};
 use std::rc::{Rc, Weak};
 use std::cell::{Ref, RefMut, RefCell};
 use std::collections::{HashSet, HashMap};
+use log::{trace, debug, info, log_enabled, Level::Trace};
+
 use super::{Row, Run, DirectionalSequence};
 use super::super::util::{Direction, Direction::{Horizontal, Vertical}, vec_remove_item};
 use super::super::grid::{Grid, Square, SquareStatus::{CrossedOut, FilledIn, Unknown},
@@ -37,7 +39,7 @@ impl Row {
         //       * infringe on the requirement of having to contain ALL squares assigned to this run in the row.
 
         // 1) L -> R scan
-        //println!("  update_possible_run_placements: L -> R scan");
+        trace!("  update_possible_run_placements: L -> R scan");
         for run_idx in 0..self.runs.len()
         {
             let run = &self.runs[run_idx];
@@ -48,7 +50,7 @@ impl Row {
                 assert!(run.possible_placements.len() == 1);
                 continue;
             }
-            //println!("    evaluating run #{} (len {})", run_idx, len);
+            trace!("    evaluating run #{} (len {})", run_idx, len);
 
             let mut possible_placements = Vec::<Range<usize>>::new();
 
@@ -66,7 +68,7 @@ impl Row {
 
             let scan_start: usize = usize::try_from(prev_run_earliest_end + 1).unwrap();
             let scan_end: usize = self.length - len + 1;
-            //println!("      prev_run_earliest_end = {}, scan_start = {}, scan_end = {}", prev_run_earliest_end, scan_start, scan_end);
+            trace!("      prev_run_earliest_end = {}, scan_start = {}, scan_end = {}", prev_run_earliest_end, scan_start, scan_end);
 
             #[allow(unused_parens)]
             for s in scan_start .. scan_end
@@ -117,38 +119,42 @@ impl Row {
                 }
             }
 
-            //println!("      possible placements (ignoring next runs): {}", possible_placements.iter()
-            //                                                                                  .map(|range| format!("[{},{}]", range.start, range.end-1))
-            //                                                                                  .collect::<Vec<_>>()
-            //                                                                                  .join(", "));
+            if log_enabled!(Trace) {
+                trace!("      possible placements (ignoring next runs): {}", possible_placements.iter()
+                                                                                                .map(|range| format!("[{},{}]", range.start, range.end-1))
+                                                                                                .collect::<Vec<_>>()
+                                                                                                .join(", "));
+            }
             let run: &mut Run = &mut self.runs[run_idx];
             run.possible_placements = possible_placements;
         }
 
         // 2) R -> L scan
-        //println!("");
-        //println!("  update_possible_run_placements: R -> L scan");
+        trace!("");
+        trace!("  update_possible_run_placements: R -> L scan");
         for run_idx in (0..(self.runs.len()-1)).rev() {
-            //println!("    evaluating run #{} (len {})", run_idx, len);
             let run = &self.runs[run_idx];
+            trace!("    evaluating run #{} (len {})", run_idx, run.length);
+
             if run.is_completed() {
                 continue; // nothing to do
             }
 
             let next_run = &self.runs[run_idx+1];
             let next_run_latest_start: usize = next_run.possible_placements.last().unwrap().start.try_into().unwrap();
-            //println!("      next_run_latest_start (run #{}, {}) = {}", next_run.index, next_run.length, next_run_latest_start);
+            trace!("      next_run_latest_start (run #{}, {}) = {}", next_run.index, next_run.length, next_run_latest_start);
 
             // drop placements that don't respect the condition that this run's end position
             // must be no greater than the next one's latest start position - 1
             let run = &mut self.runs[run_idx];
             run.possible_placements.retain(|range| range.end <= next_run_latest_start-1);
 
-            //println!("      corrected ranges: {}", run.possible_placements.iter()
-            //                                                              .map(|range| format!("[{},{}]", range.start, range.end-1))
-            //                                                              .collect::<Vec<_>>()
-            //                                                              .join(", "));
-
+            if log_enabled!(Trace) {
+                trace!("      corrected ranges: {}", run.possible_placements.iter()
+                                                                            .map(|range| format!("[{},{}]", range.start, range.end-1))
+                                                                            .collect::<Vec<_>>()
+                                                                            .join(", "));
+            }
         }
 
 
@@ -170,7 +176,7 @@ impl Row {
 
     pub fn infer_status_assignments(&mut self) -> Result<Changes, Error>
     {
-        println!("  infer_status_assignments:");
+        trace!("  infer_status_assignments:");
         let mut changes = Vec::<Change>::new();
 
         // look at the possible placements of each run:
@@ -183,7 +189,7 @@ impl Row {
                 let mut square: RefMut<Square> = run.get_square_mut(pos);
                 if run.possible_placements.iter().all(|range| range.contains(&pos))
                 {
-                    println!("    square {} is present in all possible placements of run #{} (len {}), marking it filled and assigned",
+                    trace!("    square {} is present in all possible placements of run #{} (len {}), marking it filled and assigned",
                         square.fmt_location(), run.index, run.length);
                     if let Some(change) = square.set_status(FilledIn)? {
                         changes.push(Change::from(change));
@@ -195,7 +201,7 @@ impl Row {
             }
 
             if run.possible_placements.len() == 1 {
-                println!("    run #{} (len {}) only has one possible placement, marking it completed", run.index, run.length);
+                trace!("    run #{} (len {}) only has one possible placement, marking it completed", run.index, run.length);
                 let range = run.possible_placements[0].clone(); // clone to avoid immutable borrow through mut ref
                 changes.extend(run.complete(range.start)?);
             }
@@ -214,19 +220,19 @@ impl Row {
             }
         }
 
-        //if changes.len() > 0 {
-        //    println!("fill_overlap completed successfully; changes are:");
-        //    for c in changes.iter() {
-        //        println!("  {}", c);
-        //    }
-        //}
+        if log_enabled!(Trace) && changes.len() > 0 {
+            trace!("fill_overlap completed successfully; changes are:");
+            for c in changes.iter() {
+                trace!("  {}", c);
+            }
+        }
 
         Ok(changes)
     }
 
     pub fn infer_run_assignments(&mut self) -> Result<Changes, Error>
     {
-        println!("  infer_run_assignments:");
+        trace!("  infer_run_assignments:");
         let mut changes = Vec::<Change>::new();
 
 		// find sequences of non-completed runs in this row, and their associated range within the
@@ -313,7 +319,7 @@ impl Row {
             }
 
             let squares_range = sq_range_start .. sq_range_end;
-            println!("    found range <{},{}> of non-completed runs, to receive positions within the square range [{},{}]",
+            trace!("    found range <{},{}> of non-completed runs, to receive positions within the square range [{},{}]",
                 runs_range.start, runs_range.end-1, squares_range.start, squares_range.end-1);
 
             // determine the set of filled sequences within the range we've just identified (might be empty!)
@@ -322,7 +328,7 @@ impl Row {
                                                           .into_iter()
                                                           .collect();
             if filled_sequences.is_empty() {
-                println!("    no filled sequences in row, exiting early");
+                trace!("    no filled sequences in row, exiting early");
                 continue; // nothing useful to do if there are no sequences of filled squares in the range
             }
 
@@ -335,11 +341,11 @@ impl Row {
                 possible_runs_map.insert(i, possible_runs);
             }
 
-            println!("    list of possible runs per sequence:");
+            trace!("    list of possible runs per sequence:");
             for (&seq_idx, possible_runs) in &possible_runs_map
             {
                 let seq = &filled_sequences[seq_idx];
-                println!("      seq [{:-2}, {:-2}]: possible runs = {}",
+                trace!("      seq [{:-2}, {:-2}]: possible runs = {}",
                     seq.start, seq.end-1,
                     possible_runs.iter().map(|&run_idx| format!("run #{} (len {})", run_idx, self.runs[run_idx].length))
                                         .collect::<Vec<_>>().join(", "));
@@ -360,14 +366,14 @@ impl Row {
                     // this sequence is further than length(leftmost_run) away from the leftmost sequence; can't have the leftmost run as a possibility
                     let removed = vec_remove_item(&mut possible_runs_map.get_mut(&i).unwrap(), &leftmost_run.index);
                     if let Some(_) = removed {
-                        println!("    removed the possibility of leftmost run #{} (len {}) being assigned to the sequence at [{},{}]: is more than the length of the leftmost run {} removed from the leftmost sequence at [{},{}]",
+                        trace!("    removed the possibility of leftmost run #{} (len {}) being assigned to the sequence at [{},{}]: is more than the length of the leftmost run {} removed from the leftmost sequence at [{},{}]",
                             leftmost_run.index, leftmost_run.length, seq.start, seq.end-1, leftmost_run.length, leftmost_seq.start, leftmost_seq.end-1);
                     }
                 }
                 if (seq.start .. rightmost_seq.end).len() > rightmost_run.length {
                     let removed = vec_remove_item(&mut possible_runs_map.get_mut(&i).unwrap(), &rightmost_run.index);
                     if let Some(_) = removed {
-                        println!("    removed the possibility of rightmost run #{} (len {}) being assigned to the sequence at [{},{}]: is more than the length of the rightmost run {} removed from the rightmost sequence at [{},{}]",
+                        trace!("    removed the possibility of rightmost run #{} (len {}) being assigned to the sequence at [{},{}]: is more than the length of the rightmost run {} removed from the rightmost sequence at [{},{}]",
                             rightmost_run.index, rightmost_run.length, seq.start, seq.end-1, rightmost_run.length, rightmost_seq.start, rightmost_seq.end-1);
                     }
                 }
@@ -391,7 +397,7 @@ impl Row {
                             let run = &self.runs[run_idx];
                             let seq = &filled_sequences[seq_idx];
                             let rightmost_seq = &filled_sequences[rightmost_idx];
-                            println!("    removed the possibility of run #{} (len {}) being assigned to the sequence at [{},{}]: cannot appear before sequence [{},{}] on which only earlier runs are possible",
+                            trace!("    removed the possibility of run #{} (len {}) being assigned to the sequence at [{},{}]: cannot appear before sequence [{},{}] on which only earlier runs are possible",
                                 run.index, run.length, seq.start, seq.end-1, rightmost_seq.start, rightmost_seq.end-1);
                         }
                     }
@@ -403,7 +409,7 @@ impl Row {
                             let run = &self.runs[run_idx];
                             let seq = &filled_sequences[seq_idx];
                             let leftmost_seq = &filled_sequences[leftmost_idx];
-                            println!("    removed the possibility of run #{} (len {}) being assigned to the sequence at [{},{}]: cannot appear after sequence [{},{}] on which only next runs are possible",
+                            trace!("    removed the possibility of run #{} (len {}) being assigned to the sequence at [{},{}]: cannot appear after sequence [{},{}] on which only next runs are possible",
                                 run.index, run.length, seq.start, seq.end-1, leftmost_seq.start, leftmost_seq.end-1);
                         }
                     }
@@ -428,7 +434,7 @@ impl Row {
                 else if possible_runs.len() == 1 {
                     // only one run could possibly encompass this sequence; assign it to each square
                     let run = &self.runs[possible_runs[0]];
-                    println!("    found singular run assignment for sequence [{}, {}]: run {} (len {})", seq.start, seq.end-1, run.index, run.length);
+                    trace!("    found singular run assignment for sequence [{}, {}]: run {} (len {})", seq.start, seq.end-1, run.index, run.length);
 
                     for x in seq.start..seq.end {
                         if let Some(change) = self.get_square_mut(x).assign_run(run)? {
@@ -446,7 +452,7 @@ impl Row {
                     // if all possible runs for this sequence are of the same length that the sequence already has,
                     // then we can at least confirm its placement despite not knowing exactly which one it is yet.
                     if possible_runs.iter().all(|&r| self.runs[r].length == seq.len()) {
-                        //println!("all possible runs that might contain the sequence [{}, {}] are of the same length: {}", seq.start, seq.end-1, seq.len());
+                        //trace!("all possible runs that might contain the sequence [{}, {}] are of the same length: {}", seq.start, seq.end-1, seq.len());
                         // pick any run (doesn't matter which one, they're all the same length), pretend it will be placed
                         // at this sequence's position, and cross out the squares directly in front of and behind it.
                         changes.extend(self.runs[possible_runs[0]].delineate_at(seq.start)?);
@@ -464,7 +470,7 @@ impl Row {
 
                     let min_length = possible_runs.iter().map(|&r| self.runs[r].length).min().unwrap();
                     if min_length > seq.len() {
-                        println!("    all possible runs for sequence [{}, {}] are of length at least {}; marking additional squares away from field edges as filled in (where applicable)", seq.start, seq.end-1, min_length);
+                        trace!("    all possible runs for sequence [{}, {}] are of length at least {}; marking additional squares away from field edges as filled in (where applicable)", seq.start, seq.end-1, min_length);
                     }
                     let field = self.get_fields().into_iter()
                                                  .filter(|field| field.contains(&seq.start))
@@ -537,7 +543,7 @@ impl Row {
                 }
                 // if the sequence has the same length as the run, then we've found a completed run
                 if seq.len() == run.length {
-                    //println!("found new completed run of length {} in {} row {} at offset {}", run.length, self.direction, run.get_row_index(), range.start);
+                    trace!("found new completed run of length {} in {} row {} at offset {}", run.length, self.direction, run.get_row_index(), seq.start);
                     changes.extend(run.complete(seq.start)?);
                 }
             }
